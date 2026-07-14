@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[Bb]in/
+[Oo]bj/
+/dist/
+*.user
+.vs/
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+.claude/settings.local.json

@@ -1,0 +1,21 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Wiki.Core/Wiki.Core.csproj" />
+    <Project Path="src/Wiki.Editor/Wiki.Editor.csproj" />
+    <Project Path="src/Wiki.Desktop/Wiki.Desktop.csproj" />
+    <Project Path="src/Wiki.Storage/Wiki.Storage.csproj" />
+    <Project Path="src/Wiki.Sync/Wiki.Sync.csproj" />
+    <Project Path="src/Wiki.Sync.Transport/Wiki.Sync.Transport.csproj" />
+    <Project Path="src/Wiki.Sync.Host/Wiki.Sync.Host.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Wiki.Core.Tests/Wiki.Core.Tests.csproj" />
+    <Project Path="tests/Wiki.Editor.Tests/Wiki.Editor.Tests.csproj" />
+    <Project Path="tests/Wiki.Desktop.Tests/Wiki.Desktop.Tests.csproj" />
+    <Project Path="tests/Wiki.Storage.Tests/Wiki.Storage.Tests.csproj" />
+    <Project Path="tests/Wiki.Sync.Tests/Wiki.Sync.Tests.csproj" />
+    <Project Path="tests/Wiki.Sync.Transport.Tests/Wiki.Sync.Transport.Tests.csproj" />
+    <Project Path="tests/Wiki.Sync.Host.Tests/Wiki.Sync.Host.Tests.csproj" />
+  </Folder>
+</Solution>

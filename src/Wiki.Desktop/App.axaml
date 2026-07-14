@@ -1,0 +1,36 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Wiki.Desktop.App"
+             RequestedThemeVariant="Default">
+  <Application.Styles>
+    <FluentTheme />
+    <StyleInclude Source="avares://Collective.Platform.Controls/Themes/Controls.axaml"/>
+  </Application.Styles>
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://Collective.Platform.Controls/Themes/Tokens.axaml"/>
+      </ResourceDictionary.MergedDictionaries>
+      <SolidColorBrush x:Key="Collective.Accent" Color="#0284C7"/>
+      <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Dark">
+          <ResourceDictionary.MergedDictionaries>
+            <ColorPaletteResources Accent="#0284C7"/>
+          </ResourceDictionary.MergedDictionaries>
+          <SolidColorBrush x:Key="EditorAreaBrush" Color="#1E1E1E"/>
+          <SolidColorBrush x:Key="ChromeBrush" Color="#2D2D30"/>
+          <SolidColorBrush x:Key="PaneBrush" Color="#252526"/>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+          <ResourceDictionary.MergedDictionaries>
+            <ColorPaletteResources Accent="#0284C7"/>
+          </ResourceDictionary.MergedDictionaries>
+          <SolidColorBrush x:Key="EditorAreaBrush" Color="#FFFFFF"/>
+          <SolidColorBrush x:Key="ChromeBrush" Color="#ECECEC"/>
+          <SolidColorBrush x:Key="PaneBrush" Color="#F3F3F3"/>
+        </ResourceDictionary>
+      </ResourceDictionary.ThemeDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>

@@ -1,0 +1,445 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Wiki.Desktop.ViewModels"
+        xmlns:core="using:Wiki.Core.Workspace"
+        xmlns:models="using:Wiki.Core.Models"
+        xmlns:search="using:Wiki.Core.Search"
+        xmlns:editor="using:Wiki.Editor"
+        xmlns:fmt="using:Docs.Controls"
+        xmlns:conv="using:Avalonia.Data.Converters"
+        xmlns:controls="using:Collective.Platform.Controls"
+        xmlns:views="using:Wiki.Desktop.Views"
+        xmlns:sync="using:Wiki.Desktop.Sync"
+        x:Class="Wiki.Desktop.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Icon="/Assets/collectivewiki.ico"
+        Title="CollectiveWiki" Width="1200" Height="760"
+        MinWidth="720" MinHeight="420"
+        Background="{DynamicResource EditorAreaBrush}">
+  <Window.Resources>
+    <sync:ConflictBadgeConverter x:Key="ConflictBadge"/>
+  </Window.Resources>
+  <Window.Styles>
+    <!-- Backlink rows read as links; a subtle chrome tint on hover (visible against the PaneBrush pane). -->
+    <Style Selector="Border.backlink:pointerover">
+      <Setter Property="Background" Value="{DynamicResource ChromeBrush}"/>
+    </Style>
+    <!-- Left-rail tab buttons (Files / Search / Tags). -->
+    <Style Selector="Button.railtab">
+      <Setter Property="Padding" Value="8,3"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+    <Style Selector="Border.searchresult:pointerover">
+      <Setter Property="Background" Value="{DynamicResource ChromeBrush}"/>
+    </Style>
+    <Style Selector="Border.tagrow:pointerover">
+      <Setter Property="Background" Value="{DynamicResource ChromeBrush}"/>
+    </Style>
+    <!-- Compact, flat formatting-toolbar buttons. -->
+    <Style Selector="Border.formatbar Button">
+      <Setter Property="Padding" Value="7,2"/>
+      <Setter Property="MinWidth" Value="28"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="Border.formatbar Button:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource PaneBrush}"/>
+      <Setter Property="CornerRadius" Value="4"/>
+    </Style>
+    <Style Selector="Border.formatbar ToggleButton">
+      <Setter Property="Padding" Value="7,2"/>
+      <Setter Property="MinWidth" Value="28"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    </Style>
+  </Window.Styles>
+  <DockPanel>
+    <DockPanel DockPanel.Dock="Top" Background="{DynamicResource ChromeBrush}">
+      <ToggleButton DockPanel.Dock="Right" Margin="4,2" Padding="8,2"
+                    IsChecked="{Binding BacklinksVisible, Mode=TwoWay}"
+                    Content="Backlinks" ToolTip.Tip="Show or hide the backlinks panel"/>
+      <Menu Background="Transparent">
+        <MenuItem Header="_File">
+          <MenuItem Header="Open Vault…" Click="OnOpenVault"/>
+          <MenuItem Header="Open Recent" x:Name="OpenRecentMenu" IsEnabled="False"/>
+          <MenuItem Header="New Note" InputGesture="Ctrl+N" Click="OnNewNote"/>
+          <MenuItem Header="Daily Note" Click="OnDailyNote"/>
+          <MenuItem Header="New from Template…" Click="OnNewFromTemplate"/>
+          <MenuItem Header="Insert Template…" Click="OnInsertTemplate"/>
+          <MenuItem Header="Save" InputGesture="Ctrl+S" Click="OnSave"/>
+          <MenuItem Header="Export">
+            <MenuItem Header="Export Note as HTML…" Click="OnExportNote"/>
+            <MenuItem Header="Export Vault as HTML…" Click="OnExportVault"/>
+            <MenuItem Header="Copy as HTML" Click="OnCopyHtml"/>
+          </MenuItem>
+          <Separator/>
+          <MenuItem Header="Rename Note…" Click="OnRenameActive"/>
+          <MenuItem Header="Move Note…" Click="OnMoveActive"/>
+          <MenuItem Header="Delete Note" Click="OnDeleteActive"/>
+          <MenuItem Header="Close Tab" InputGesture="Ctrl+W" Click="OnCloseTab"/>
+          <Separator/>
+          <!-- Sharing/sync act on the open vault, so they're disabled on the empty state (Join opens one, so it stays enabled).
+               OnShareVault/OnSyncNow keep their own no-vault guard as a safety net for the command palette. -->
+          <MenuItem Header="Share Vault…" Click="OnShareVault" IsEnabled="{Binding VaultOpen}"/>
+          <MenuItem Header="Join Shared Vault…" Click="OnJoinVault"/>
+          <MenuItem Header="Sync Now" Click="OnSyncNow" IsEnabled="{Binding VaultOpen}"/>
+          <MenuItem Header="Stop Sharing" Click="OnStopSharing" IsEnabled="{Binding VaultOpen}"/>
+          <Separator/>
+          <MenuItem Header="Exit" Click="OnExit"/>
+        </MenuItem>
+        <MenuItem Header="_Go">
+          <MenuItem Header="Back" InputGesture="Alt+Left" Click="OnGoBack"/>
+          <MenuItem Header="Forward" InputGesture="Alt+Right" Click="OnGoForward"/>
+          <Separator/>
+          <MenuItem Header="Quick Switch…" InputGesture="Ctrl+O" Click="OnQuickSwitch"/>
+          <MenuItem Header="Search in Vault…" InputGesture="Ctrl+Shift+F" Click="OnFocusSearch"/>
+          <MenuItem Header="Command Palette…" InputGesture="Ctrl+P" Click="OnCommandPalette"/>
+          <MenuItem Header="Find in Note…" InputGesture="Ctrl+F" Click="OnFindInNote"/>
+          <MenuItem Header="Replace in Note…" InputGesture="Ctrl+H" Click="OnReplaceInNote"/>
+        </MenuItem>
+        <MenuItem Header="_View">
+          <MenuItem Header="Theme">
+            <MenuItem x:Name="ThemeSystemItem" Header="System" ToggleType="Radio" GroupName="theme" Click="OnThemeSystem"/>
+            <MenuItem x:Name="ThemeLightItem" Header="Light" ToggleType="Radio" GroupName="theme" Click="OnThemeLight"/>
+            <MenuItem x:Name="ThemeDarkItem" Header="Dark" ToggleType="Radio" GroupName="theme" Click="OnThemeDark"/>
+          </MenuItem>
+          <Separator/>
+          <MenuItem Header="Reading View" InputGesture="Ctrl+E" Click="OnToggleReadMode"/>
+          <MenuItem Header="Focus Mode" Click="OnToggleFocusMode"/>
+          <!-- Ctrl +/-/0 are handled in code (OnKeyDown + the surface); Avalonia's KeyGesture can't parse
+               "Ctrl+=" so these carry no InputGesture label — the shortcuts are noted in the toolbar tips. -->
+          <MenuItem Header="Zoom In  (Ctrl +)" Click="OnZoomIn"/>
+          <MenuItem Header="Zoom Out  (Ctrl -)" Click="OnZoomOut"/>
+          <MenuItem Header="Reset Zoom  (Ctrl 0)" Click="OnZoomReset"/>
+          <MenuItem Header="Backlinks Panel" ToggleType="CheckBox" IsChecked="{Binding BacklinksVisible, Mode=TwoWay}"/>
+          <MenuItem Header="Local Graph" InputGesture="Ctrl+G" Click="OnLocalGraph"/>
+          <MenuItem Header="Vault Graph" InputGesture="Ctrl+Shift+G" Click="OnGlobalGraph"/>
+          <Separator/>
+          <MenuItem Header="Split Right  (Ctrl \)" Click="OnSplitRight"/>
+          <MenuItem Header="Close Pane  (Ctrl Shift \)" Click="OnCloseRightPane"
+                    IsEnabled="{Binding Panes.IsSplit}"/>
+          <Separator/>
+          <MenuItem Header="Edit Properties…  (Ctrl ;)" Click="OnEditProperties"/>
+          <MenuItem Header="Settings…" InputGesture="Ctrl+," Click="OnSettings"/>
+        </MenuItem>
+        <MenuItem Header="_Help">
+          <MenuItem Header="About CollectiveWiki" Click="OnAbout"/>
+        </MenuItem>
+      </Menu>
+    </DockPanel>
+    <Border DockPanel.Dock="Bottom" Background="{DynamicResource ChromeBrush}" Height="24">
+      <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="12"
+                    Margin="0,0,12,0" VerticalAlignment="Center">
+          <!-- Live word/char count for the active note; cleared on image/graph tabs (code-behind). -->
+          <TextBlock x:Name="WordCountText" VerticalAlignment="Center" FontSize="12"
+                     Classes="muted" Text=""/>
+          <!-- Content set in code-behind to "⚠ N conflict(s)"; hidden when there are none. -->
+          <Button x:Name="ConflictButton" IsVisible="False" Click="OnConflictsClick"
+                  Background="Transparent" BorderThickness="0" Padding="4,0" FontSize="12"
+                  VerticalAlignment="Center" Cursor="Hand"
+                  Foreground="{DynamicResource Collective.Warn}"
+                  AutomationProperties.Name="Sync conflicts"
+                  ToolTip.Tip="Open the first conflicted copy"/>
+          <TextBlock x:Name="SyncStatusText" VerticalAlignment="Center" FontSize="12"
+                     Foreground="{DynamicResource Collective.Accent}" Text=""/>
+        </StackPanel>
+        <TextBlock Margin="10,0" VerticalAlignment="Center" FontSize="12"
+                   Text="{Binding CurrentNote}"/>
+      </DockPanel>
+    </Border>
+    <Grid ColumnDefinitions="240,*,Auto">
+      <!-- left: rail with Files tree / vault Search / Tags browser -->
+      <Border Grid.Column="0" Background="{DynamicResource PaneBrush}" Padding="6">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="{Binding VaultName}" FontWeight="Bold" Margin="4,4,4,6"/>
+          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="2" Margin="2,0,2,6">
+            <Button Content="Files" Click="OnRailFiles" Classes="railtab" ToolTip.Tip="Note tree"/>
+            <Button Content="Search" Click="OnRailSearch" Classes="railtab" ToolTip.Tip="Search the vault (Ctrl+Shift+F)"/>
+            <Button Content="Tags" Click="OnRailTags" Classes="railtab" ToolTip.Tip="Browse tags"/>
+            <Button Content="Outline" Click="OnRailOutline" Classes="railtab" ToolTip.Tip="This note's headings"/>
+            <Button Content="⭐" Click="OnRailBookmarks" Classes="railtab" ToolTip.Tip="Bookmarked notes"/>
+          </StackPanel>
+          <Panel>
+            <!-- Files -->
+            <!-- Background="Transparent" makes the whole pane hit-test so a right-click on empty
+                 space (below/around the notes) opens this root-level menu; right-clicking a note or
+                 folder still shows the per-item menu below (the innermost ContextMenu wins). -->
+            <TreeView x:Name="NotesTree" ItemsSource="{Binding Tree}" IsVisible="{Binding IsFilesRail}"
+                      Background="Transparent" DragDrop.AllowDrop="True"
+                      SelectionChanged="OnNoteSelected" KeyDown="OnNotesTreeKeyDown">
+              <TreeView.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="New Note" Click="OnRailNewNote"/>
+                  <MenuItem Header="New Folder" Click="OnRailNewFolder"/>
+                </ContextMenu>
+              </TreeView.ContextMenu>
+              <TreeView.ItemTemplate>
+                <TreeDataTemplate ItemsSource="{Binding Children}" x:DataType="core:VaultNode">
+                  <StackPanel Orientation="Horizontal" PointerPressed="OnTreeItemPointerPressed"
+                              PointerMoved="OnTreeItemPointerMoved"
+                              AttachedToVisualTree="OnTreeItemAttached">
+                    <StackPanel.ContextMenu>
+                      <ContextMenu>
+                        <!-- note commands -->
+                        <MenuItem Header="Open" Click="OnTreeOpen" IsVisible="{Binding IsNote}"/>
+                        <MenuItem Header="Open in New Tab" Click="OnTreeOpenNewTab" IsVisible="{Binding IsNote}"/>
+                        <MenuItem Header="Open to the Side" Click="OnTreeOpenToSide" IsVisible="{Binding IsNote}"/>
+                        <MenuItem Header="Rename…" InputGesture="F2" Click="OnTreeRename" IsVisible="{Binding IsNote}"/>
+                        <!-- folder commands -->
+                        <MenuItem Header="New Note" Click="OnTreeNewNoteHere" IsVisible="{Binding !IsNote}"/>
+                        <MenuItem Header="New Folder" Click="OnTreeNewFolder" IsVisible="{Binding !IsNote}"/>
+                        <MenuItem Header="Rename Folder…" Click="OnFolderRename" IsVisible="{Binding !IsNote}"/>
+                        <!-- both -->
+                        <MenuItem Header="Move to…" Click="OnTreeMove"/>
+                        <MenuItem Header="Toggle Bookmark" Click="OnTreeBookmark" IsVisible="{Binding IsNote}"/>
+                        <MenuItem Header="Copy Wikilink" Click="OnTreeCopyLink" IsVisible="{Binding IsNote}"/>
+                        <MenuItem Header="Reveal in Explorer" Click="OnTreeReveal"/>
+                        <Separator/>
+                        <MenuItem Header="Delete" InputGesture="Delete" Click="OnTreeDelete" IsVisible="{Binding IsNote}"/>
+                        <MenuItem Header="Delete Folder" Click="OnFolderDelete" IsVisible="{Binding !IsNote}"/>
+                      </ContextMenu>
+                    </StackPanel.ContextMenu>
+                    <TextBlock Text="{Binding Name}"/>
+                    <TextBlock Text=" ⚠" Foreground="{DynamicResource Collective.Warn}" FontSize="12" VerticalAlignment="Center"
+                               ToolTip.Tip="Conflicted copy"
+                               IsVisible="{Binding Name, Converter={StaticResource ConflictBadge}}"/>
+                  </StackPanel>
+                </TreeDataTemplate>
+              </TreeView.ItemTemplate>
+            </TreeView>
+            <!-- Search -->
+            <DockPanel IsVisible="{Binding IsSearchRail}">
+              <TextBox x:Name="SearchBox" DockPanel.Dock="Top" PlaceholderText="Search notes…"
+                       AutomationProperties.Name="Search notes" TextChanged="OnSearchTextChanged" Margin="0,0,0,6"/>
+              <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="11" Margin="2,0,2,6"
+                         Text="Filters:  tag:  path:  &quot;exact phrase&quot;"/>
+              <ScrollViewer>
+                <ItemsControl ItemsSource="{Binding SearchResults}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="search:VaultSearchResult">
+                      <Border Classes="searchresult" Padding="4,3" CornerRadius="4" Background="Transparent"
+                              Cursor="Hand" PointerPressed="OnSearchResultPressed" ToolTip.Tip="{Binding NotePath}">
+                        <StackPanel>
+                          <TextBlock Text="{Binding Title}" Foreground="{DynamicResource Collective.Accent}"
+                                     TextTrimming="CharacterEllipsis"/>
+                          <ItemsControl ItemsSource="{Binding Snippets}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate x:DataType="search:SearchSnippet">
+                                <TextBlock Text="{Binding Text}" Classes="muted" FontSize="11.5"
+                                           TextTrimming="CharacterEllipsis"/>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </DockPanel>
+            <!-- Tags (nested tree; a node lists notes under its tag prefix) -->
+            <TreeView IsVisible="{Binding IsTagsRail}" ItemsSource="{Binding TagTreeRoots}"
+                      Background="Transparent">
+              <TreeView.ItemTemplate>
+                <TreeDataTemplate ItemsSource="{Binding Children}" x:DataType="models:TagTreeNode">
+                  <StackPanel Orientation="Horizontal" Spacing="6" Cursor="Hand"
+                              Background="Transparent" PointerPressed="OnTagNodePressed">
+                    <StackPanel.ContextMenu>
+                      <ContextMenu>
+                        <MenuItem Header="Rename tag…" Click="OnTagRename"/>
+                      </ContextMenu>
+                    </StackPanel.ContextMenu>
+                    <TextBlock Text="{Binding Segment, StringFormat='#{0}'}" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding TotalCount}" Classes="muted" FontSize="11.5" VerticalAlignment="Center"/>
+                  </StackPanel>
+                </TreeDataTemplate>
+              </TreeView.ItemTemplate>
+            </TreeView>
+            <!-- Outline -->
+            <ScrollViewer IsVisible="{Binding IsOutlineRail}">
+              <ItemsControl ItemsSource="{Binding Outline}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:OutlineRow">
+                    <Border Classes="tagrow" Padding="4,3" CornerRadius="4" Background="Transparent"
+                            Cursor="Hand" PointerPressed="OnOutlinePressed">
+                      <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"
+                                 Margin="{Binding Indent, Converter={x:Static views:MainWindow.LeftMargin}}"/>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+            <!-- Bookmarks -->
+            <ScrollViewer IsVisible="{Binding IsBookmarksRail}">
+              <StackPanel>
+                <TextBlock Text="No bookmarks yet — ⭐ a note (Ctrl+D)" Classes="muted" FontSize="11.5"
+                           Margin="4,6" TextWrapping="Wrap"
+                           IsVisible="{Binding Bookmarks.Count, Converter={x:Static views:MainWindow.CountToHidden}}"/>
+                <ItemsControl ItemsSource="{Binding Bookmarks}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="x:String">
+                      <Border Classes="tagrow" Padding="4,3" CornerRadius="4" Background="Transparent"
+                              Cursor="Hand" PointerPressed="OnBookmarkPressed" ToolTip.Tip="{Binding}">
+                        <TextBlock Text="{Binding, Converter={x:Static views:MainWindow.NoteTitleOf}}"
+                                   TextTrimming="CharacterEllipsis"/>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </ScrollViewer>
+          </Panel>
+        </DockPanel>
+      </Border>
+      <GridSplitter Grid.Column="0" Width="3" HorizontalAlignment="Right" Background="Transparent"/>
+      <!-- center: tab strip + active document host. The Panel layers the Ctrl+O quick-switcher overlay
+           (and Task 8's empty state) on top of the document area. -->
+      <Panel Grid.Column="1">
+        <DockPanel>
+          <!-- Formatting toolbar: acts on the active note surface; disabled (in code) for image tabs. -->
+          <Border x:Name="FormatBar" Classes="formatbar" DockPanel.Dock="Top" Padding="6,3"
+                  Background="{DynamicResource ChromeBrush}"
+                  BorderBrush="{DynamicResource PaneBrush}" BorderThickness="0,0,0,1"
+                  IsVisible="{Binding Tabs.Active, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+            <StackPanel Orientation="Horizontal" Spacing="1">
+              <!-- Shared CollectiveDocs formatting toolchain: styles dropdown, B/I/S, lists, indent, table
+                   (colour/alignment/font/underline are capability-gated off for markdown). -->
+              <fmt:EditorToolbar x:Name="FormatToolbar"/>
+              <!-- Wiki-specific formatting the shared toolbar doesn't carry. -->
+              <Button Click="OnFmtHighlight" Content="🖍" ToolTip.Tip="Highlight (==mark==)"
+                      AutomationProperties.Name="Highlight"/>
+              <Button Click="OnFmtInlineCode" FontFamily="Cascadia Mono, Consolas, monospace"
+                      Content="&lt;/&gt;" ToolTip.Tip="Inline code" AutomationProperties.Name="Inline code"/>
+              <Button Click="OnFmtQuote" Content="❝" ToolTip.Tip="Quote" AutomationProperties.Name="Quote"/>
+              <Button Click="OnFmtCodeBlock" FontFamily="Cascadia Mono, Consolas, monospace"
+                      Content="```" ToolTip.Tip="Code block" AutomationProperties.Name="Code block"/>
+              <Button Click="OnFmtLink" Content="[[ ]]" ToolTip.Tip="Wiki link (Ctrl+K)" AutomationProperties.Name="Wiki link"/>
+              <Border Width="1" Margin="4,3" Background="{DynamicResource PaneBrush}"/>
+              <ToggleButton x:Name="ReadModeToggle" Content="👁 Read" IsCheckedChanged="OnReadModeToggled"
+                            ToolTip.Tip="Reading view (Ctrl+E) — rendered, no editing"
+                            AutomationProperties.Name="Reading view"/>
+              <ToggleButton x:Name="FocusToggle" Content="◎ Focus" IsCheckedChanged="OnFocusToggled"
+                            ToolTip.Tip="Focus mode — centre the text in a narrow column"
+                            AutomationProperties.Name="Focus mode"/>
+              <Border Width="1" Margin="4,3" Background="{DynamicResource PaneBrush}"/>
+              <Button Click="OnZoomOut" Content="A−" ToolTip.Tip="Zoom out (Ctrl+-)" AutomationProperties.Name="Zoom out"/>
+              <Button Click="OnZoomIn" Content="A+" ToolTip.Tip="Zoom in (Ctrl+=)" AutomationProperties.Name="Zoom in"/>
+            </StackPanel>
+          </Border>
+          <editor:FindBar x:Name="NoteFindBar" DockPanel.Dock="Top"/>
+          <!-- Split area: left pane (always) | splitter | right pane (only when split). Each pane = its own
+               tab strip + document host. The shared toolbar/find bar above act on the active pane's surface.
+               The right column starts collapsed (Width=0) and only opens to a star share when a split exists
+               (SyncSplitColumn). A plain "*,Auto,*" reserves half the width for the hidden right pane — star
+               columns hold their share regardless of child visibility — which strands the editor in the left half. -->
+          <Grid x:Name="SplitGrid">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="0"/> <!-- right pane; opened to a star share by SyncSplitColumn when split -->
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" x:Name="PaneLeftBorder" BorderThickness="0"
+                    BorderBrush="{DynamicResource Collective.Accent}">
+              <DockPanel>
+                <Border DockPanel.Dock="Top" Background="{DynamicResource ChromeBrush}"
+                        IsVisible="{Binding Panes.Left.Active, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                  <controls:DocumentTabStrip x:Name="TabStrip"/>
+                </Border>
+                <Border x:Name="TabHost"/>
+              </DockPanel>
+            </Border>
+            <GridSplitter Grid.Column="1" Width="3" Background="{DynamicResource PaneBrush}"
+                          IsVisible="{Binding Panes.IsSplit}"/>
+            <Border Grid.Column="2" x:Name="PaneRightBorder" BorderThickness="0"
+                    BorderBrush="{DynamicResource Collective.Accent}"
+                    IsVisible="{Binding Panes.IsSplit}">
+              <DockPanel>
+                <Border DockPanel.Dock="Top" Background="{DynamicResource ChromeBrush}">
+                  <controls:DocumentTabStrip x:Name="TabStripRight"/>
+                </Border>
+                <Border x:Name="TabHostRight"/>
+              </DockPanel>
+            </Border>
+          </Grid>
+        </DockPanel>
+        <!-- First-run empty state: shown until a vault is opened. -->
+        <Border IsVisible="{Binding !VaultOpen}" Padding="24">
+          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" MaxWidth="360">
+            <TextBlock Classes="title" Text="CollectiveWiki" HorizontalAlignment="Center"/>
+            <TextBlock Classes="muted" Text="A local-first knowledge base" HorizontalAlignment="Center"
+                       Margin="0,0,0,2"/>
+            <TextBlock Classes="muted" Text="Tip: press Ctrl+O to jump to any note, Ctrl+P for commands"
+                       HorizontalAlignment="Center" TextWrapping="Wrap" FontSize="11.5" Margin="0,0,0,8"/>
+            <Button Classes="accent" Content="Open Vault…" Click="OnOpenVault"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+            <Button Content="Join Shared Vault…" Click="OnJoinVault"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+            <TextBlock Classes="muted" Text="Recent vaults" Margin="0,12,0,0"/>
+            <ItemsControl x:Name="RecentVaultsList"/>
+          </StackPanel>
+        </Border>
+        <views:QuickSwitcherOverlay x:Name="Switcher" IsVisible="False"
+                                    VerticalAlignment="Top" HorizontalAlignment="Center"
+                                    Margin="0,44,0,0" Width="460"/>
+        <views:CommandPaletteOverlay x:Name="Palette" IsVisible="False"
+                                     VerticalAlignment="Top" HorizontalAlignment="Center"
+                                     Margin="0,44,0,0" Width="460"/>
+      </Panel>
+      <!-- right: backlinks (collapsible; Auto column shrinks to 0 when hidden) -->
+      <Border Grid.Column="2" Width="260" IsVisible="{Binding BacklinksVisible}"
+              Background="{DynamicResource PaneBrush}" Padding="6">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="{Binding BacklinksHeader}" FontWeight="Bold" Margin="4,4,4,8"/>
+          <ScrollViewer>
+            <StackPanel>
+              <ItemsControl ItemsSource="{Binding Backlinks}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:BacklinkRow">
+                    <Border Classes="backlink" Padding="4,2" CornerRadius="4" Background="Transparent"
+                            Cursor="Hand" ToolTip.Tip="{Binding NotePath}"
+                            PointerPressed="OnBacklinkPressed">
+                      <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"
+                                 Foreground="{DynamicResource Collective.Accent}" TextDecorations="Underline"/>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <!-- Unlinked mentions: this note named in prose but not linked -->
+              <TextBlock Text="{Binding UnlinkedHeader}" FontWeight="Bold" Margin="4,14,4,8"
+                         IsVisible="{Binding UnlinkedMentions.Count, Converter={x:Static views:MainWindow.CountToVisible}}"/>
+              <ItemsControl ItemsSource="{Binding UnlinkedMentions}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:UnlinkedMentionRow">
+                    <Border Classes="backlink" Padding="4,3" CornerRadius="4" Background="Transparent"
+                            ToolTip.Tip="{Binding SourceNotePath}">
+                      <StackPanel Spacing="1">
+                        <DockPanel>
+                          <Button DockPanel.Dock="Right" Content="Link" Padding="6,1" FontSize="11"
+                                  Click="OnLinkMention" ToolTip.Tip="Link this mention"/>
+                          <TextBlock Text="{Binding Title}" VerticalAlignment="Center"
+                                     Foreground="{DynamicResource Collective.Accent}" Cursor="Hand"
+                                     PointerPressed="OnMentionTitlePressed" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                        <TextBlock Text="{Binding Snippet}" Classes="muted" FontSize="11"
+                                   TextTrimming="CharacterEllipsis"/>
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Grid>
+  </DockPanel>
+</Window>

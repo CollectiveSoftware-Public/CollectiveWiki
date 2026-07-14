@@ -1,0 +1,12 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Wiki.Sync\Wiki.Sync.csproj" />
+    <ProjectReference Include="..\Wiki.Sync.Transport\Wiki.Sync.Transport.csproj" />
+    <ProjectReference Include="..\Wiki.Core\Wiki.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Collective.Platform.Abstractions" Version="1.12.0" />
+    <PackageReference Include="Collective.Platform.Secrets" Version="1.12.0" />
+  </ItemGroup>
+</Project>

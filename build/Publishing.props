@@ -1,0 +1,23 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Project>
+  <!--
+    Cross-platform publish settings for the desktop head, imported by Wiki.Desktop.csproj.
+    With these, a plain `dotnet publish -c Release -r <rid> -o dist/<rid>` produces a
+    self-contained single-file exe (no PDBs) on any OS.
+  -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <!-- Native deps (SkiaSharp/HarfBuzz) drop their .pdb in as content; strip them from the release. -->
+  <Target Name="StripPublishPdbs" AfterTargets="Publish">
+    <ItemGroup>
+      <_PublishPdb Include="$(PublishDir)**/*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(_PublishPdb)" />
+  </Target>
+</Project>

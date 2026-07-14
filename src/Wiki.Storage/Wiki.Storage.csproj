@@ -1,0 +1,14 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- The local FTS5 engine (MIT) — bundles native SQLite, zero server. Pin the patched native
+         SQLite to override the vulnerable transitive lib Microsoft.Data.Sqlite still pulls
+         (CVE-2025-6965 / GHSA-2m69-gcr7-jv3q). Same vetted deps as CollectiveMail / CollectiveDB. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Wiki.Core\Wiki.Core.csproj" />
+  </ItemGroup>
+</Project>
