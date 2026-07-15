@@ -22,6 +22,51 @@ Part of the [Collective Software](https://github.com/CollectiveSoftware-Public) 
 - **HTML export** — export a single note or the whole vault as a self-contained static site.
 - **Peer-to-peer sync (optional)** — end-to-end-authenticated vault-to-vault sync across your own devices over your LAN or a self-hosted relay. No third-party server, ever.
 
+## Download
+
+Grab the latest build from [Releases](https://github.com/CollectiveSoftware-Public/CollectiveWiki/releases/latest):
+
+| Platform | File |
+|---|---|
+| Windows (x64) | `CollectiveWiki-<version>-win-x64.exe` |
+| Linux (x64) | `CollectiveWiki-<version>-linux-x64` |
+
+Both are self-contained single files — no .NET runtime required. On Linux, mark it executable:
+`chmod +x CollectiveWiki-<version>-linux-x64`.
+
+### A note on unsigned builds
+
+CollectiveWiki is **not code-signed**, so:
+
+- **Windows SmartScreen will warn you** on first run ("Windows protected your PC" → *More info* → *Run anyway*).
+- **Some antivirus may flag it.** Code-signing certificates require a verified legal identity, which
+  this project does not have. We would rather ship unsigned and tell you plainly than not ship.
+
+Because we can't rely on the OS to vouch for the binary, every release is **cryptographically signed by
+the project instead** — and you can check it yourself.
+
+### Verify your download
+
+Every release ships `manifest.json` (the version plus a SHA-256 for each binary) and `manifest.json.sig`
+(an ECDSA P-256 signature over that manifest). Verifying proves the binary came from us and wasn't
+altered in transit.
+
+This project's public signing key:
+
+```
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETQrOGlaKuD6QzGtUzI4E/56mEn3Dd98qXYFgRBKds+DuDYFIsbNywlsFJdzylJ7a0Ef0sXPk2srXp08A7HNqag==
+```
+
+```sh
+gh release download v1.0.0 -R CollectiveSoftware-Public/CollectiveWiki --dir cw
+pwsh ./build/verify-release.ps1 -Dir cw -PublicKeyBase64 "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETQrOGlaKuD6QzGtUzI4E/56mEn3Dd98qXYFgRBKds+DuDYFIsbNywlsFJdzylJ7a0Ef0sXPk2srXp08A7HNqag=="
+```
+
+A genuine release prints `Release verified`. Anything else — **don't run the binary**.
+
+The signing key is held offline and never touches CI, so a compromise of this repository or of GitHub
+Actions still cannot produce a release that verifies.
+
 ## Build from source
 
 CollectiveWiki targets **.NET 10** and builds entirely offline — every `Collective.*` dependency is vendored in `build/packages/`, so no private package feed is required (only nuget.org, for Markdig and the test SDKs).

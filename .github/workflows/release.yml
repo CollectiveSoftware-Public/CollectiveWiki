@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Tag -> build -> DRAFT release. Holds no secrets: the release is signed and published
+# from the maintainer's machine (build/sign-release.ps1), never from CI.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        name: Assert tag matches Directory.Build.props <Version>
+        shell: pwsh
+        run: |
+          $v = ./build/assert-version.ps1 -Tag "${{ github.ref_name }}" | Select-Object -Last 1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+  build:
+    needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            built: CollectiveWiki.exe
+            asset_ext: .exe
+          - os: ubuntu-latest
+            rid: linux-x64
+            built: CollectiveWiki
+            asset_ext: ''
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish ${{ matrix.rid }}
+        shell: pwsh
+        run: ./build/publish-desktop.ps1 -Rid ${{ matrix.rid }}
+      - name: Name the release asset
+        shell: pwsh
+        run: |
+          $v = '${{ needs.guard.outputs.version }}'
+          $src = Join-Path 'dist/${{ matrix.rid }}' '${{ matrix.built }}'
+          if (-not (Test-Path $src)) { throw "publish produced no $src" }
+          New-Item -ItemType Directory -Force -Path staged | Out-Null
+          Move-Item $src (Join-Path 'staged' "CollectiveWiki-$v-${{ matrix.rid }}${{ matrix.asset_ext }}")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: staged/CollectiveWiki-*
+          if-no-files-found: error
+
+  draft:
+    needs: [guard, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: staged
+          merge-multiple: true
+      - name: Generate manifest
+        shell: pwsh
+        run: |
+          ./build/make-manifest.ps1 `
+            -Version '${{ needs.guard.outputs.version }}' `
+            -Tag '${{ github.ref_name }}' `
+            -Repo '${{ github.repository }}' `
+            -StagedDir staged `
+            -OutFile staged/manifest.json
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --draft \
+            --title "CollectiveWiki ${{ github.ref_name }}" \
+            --generate-notes \
+            staged/CollectiveWiki-* staged/manifest.json
+      - name: Remind that the release is unsigned until signed locally
+        run: |
+          echo "::notice::Draft ${{ github.ref_name }} created WITHOUT a signature."
+          echo "::notice::Run: ./build/sign-release.ps1 -Tag ${{ github.ref_name }}"
