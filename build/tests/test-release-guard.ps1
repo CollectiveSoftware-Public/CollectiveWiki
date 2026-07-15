@@ -140,5 +140,19 @@ try {
     Remove-Item $pubPath -Force -ErrorAction SilentlyContinue
 }
 
+Write-Host 'Get-VersionFromTag — prefix, not character-trim'
+Assert-Equal '1.0.0' (Get-VersionFromTag -Tag 'v1.0.0') 'strips exactly one leading v'
+Assert-Equal '1.0.0-rc1' (Get-VersionFromTag -Tag 'v1.0.0-rc1') 'preserves a prerelease suffix'
+Assert-Equal '1.0.0-VERBOSE' (Get-VersionFromTag -Tag 'v1.0.0-VERBOSE') 'a later v in the version is untouched'
+
+Assert-ThrowsContaining { Get-VersionFromTag -Tag 'vv1.0.0' } @('vv1.0.0') `
+    'vv1.0.0 is REJECTED and named (TrimStart would have silently yielded 1.0.0)'
+Assert-ThrowsContaining { Get-VersionFromTag -Tag '1.0.0' } @('1.0.0') `
+    'a tag with no v prefix is REJECTED'
+Assert-ThrowsContaining { Get-VersionFromTag -Tag 'V1.0.0' } @('V1.0.0') `
+    'an uppercase V prefix is REJECTED (case-sensitive, matching assert-version.ps1)'
+Assert-ThrowsContaining { Get-VersionFromTag -Tag 'v' } @("'v'") `
+    'a bare v with no version is REJECTED'
+
 if ($script:Failures -gt 0) { Write-Host "`n$($script:Failures) FAILED"; exit 1 }
 Write-Host "`nAll release-guard tests passed"; exit 0

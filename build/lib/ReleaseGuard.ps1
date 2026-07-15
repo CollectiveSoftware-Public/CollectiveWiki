@@ -182,3 +182,19 @@ function Get-EffectivePublicKeyBase64 {
         $k.Dispose()
     }
 }
+
+function Get-VersionFromTag {
+    <#
+    .SYNOPSIS
+      Turns a release tag into its bare version, rejecting anything not shaped exactly 'vX...'.
+    .DESCRIPTION
+      Replaces `$Tag.TrimStart('v')`, which is CHARACTER-based: it strips every leading 'v', so
+      'vv1.0.0' silently became '1.0.0'. Case-sensitive, matching assert-version.ps1's -cne.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Tag)
+    if ($Tag -cnotmatch '^v(?<v>[^v].*)$') {
+        throw "Tag '$Tag' is not a valid release tag: expected exactly one leading 'v' followed by a version (e.g. v1.0.0)."
+    }
+    $Matches['v']
+}

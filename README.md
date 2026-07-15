@@ -58,14 +58,34 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETQrOGlaKuD6QzGtUzI4E/56mEn3Dd98qXYFgRBKds+Du
 ```
 
 ```sh
+# 1. Get the verifier. It lives in this repo — a shallow clone is the simplest way to get it
+#    and its two library files in the layout it expects.
+git clone --depth 1 https://github.com/CollectiveSoftware-Public/CollectiveWiki.git
+# 2. Download the release you want to check.
 gh release download v1.0.0 -R CollectiveSoftware-Public/CollectiveWiki --dir cw
-pwsh ./build/verify-release.ps1 -Dir cw -PublicKeyBase64 "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETQrOGlaKuD6QzGtUzI4E/56mEn3Dd98qXYFgRBKds+DuDYFIsbNywlsFJdzylJ7a0Ef0sXPk2srXp08A7HNqag=="
+# 3. Verify.
+pwsh ./CollectiveWiki/build/verify-release.ps1 -Dir cw -PublicKeyBase64 "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETQrOGlaKuD6QzGtUzI4E/56mEn3Dd98qXYFgRBKds+DuDYFIsbNywlsFJdzylJ7a0Ef0sXPk2srXp08A7HNqag=="
 ```
 
 A genuine release prints `Release verified`. Anything else — **don't run the binary**.
 
-The signing key is held offline and never touches CI, so a compromise of this repository or of GitHub
-Actions still cannot produce a release that verifies.
+The verifier checks three things: the manifest carries a valid signature from the key above; every
+binary you downloaded hashes to exactly what that signed manifest says; and **no extra file is present
+that the manifest doesn't declare** — the signature vouches only for the files it lists.
+
+Note the verifier and the public key both come from this repo, so verification protects your *download*
+(a swapped asset, a hostile mirror, a corrupted transfer) rather than protecting you from this repo
+itself. That's the honest boundary.
+
+The signing key is held offline and never touches CI, so a stolen push token, a hostile mirror, or a
+swapped release asset cannot produce a release that verifies — an attacker would need the key itself.
+
+To be precise about what this does *not* cover: the binaries are built by GitHub Actions, so a
+compromise of this repository or of the build pipeline could produce a *genuinely signed* release.
+Signing withholds release authority from CI; it does not prove the source that CI compiled. What you can
+check for yourself is that each release is built from its tag by the workflow committed at that tag
+(`.github/workflows/release.yml`), and that the source it built is the source you can read here. We don't
+yet offer reproducible builds, which is what it would take to prove the binary matches that source.
 
 ## Build from source
 

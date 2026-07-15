@@ -1,27 +1,43 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Tag -> build -> DRAFT release. Holds no secrets: the release is signed and published
 # from the maintainer's machine (build/sign-release.ps1), never from CI.
+#
+# Hardening notes (auto-update spec §9 R7/R8):
+#  - permissions are per-job: only `draft` needs contents:write. checkout defaults to
+#    persist-credentials:true, so a workflow-wide token would sit in .git/config inside the
+#    build job — the one job that executes third-party MSBuild/NuGet code.
+#  - contexts reach run: bodies via env:, never ${{ }} splicing. Git ref names permit " $ ` ; &
+#    and branch protection does NOT cover tag pushes.
+#  - actions are pinned to commit SHAs: a mutable tag is third-party code inside the TCB. Pinned
+#    at v4 (the version proven end-to-end by the live v1.0.0 run) — this does NOT clear the
+#    Node-20-deprecation warnings actions/* emit; only a major-version bump does, and that bump is
+#    a separate, unverified change deferred until a real tag push can prove it out.
 name: release
 
 on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   guard:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
       - id: check
         name: Assert tag matches Directory.Build.props <Version>
         shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          $v = ./build/assert-version.ps1 -Tag "${{ github.ref_name }}" | Select-Object -Last 1
+          $v = ./build/assert-version.ps1 -Tag $env:TAG | Select-Object -Last 1
           if ($LASTEXITCODE -ne 0) { exit 1 }
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
@@ -40,23 +56,33 @@ jobs:
             built: CollectiveWiki
             asset_ext: ''
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           dotnet-version: '10.0.x'
       - name: Publish ${{ matrix.rid }}
         shell: pwsh
-        run: ./build/publish-desktop.ps1 -Rid ${{ matrix.rid }}
+        env:
+          RID: ${{ matrix.rid }}
+        run: ./build/publish-desktop.ps1 -Rid $env:RID
       - name: Name the release asset
         shell: pwsh
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          RID: ${{ matrix.rid }}
+          BUILT: ${{ matrix.built }}
+          ASSET_EXT: ${{ matrix.asset_ext }}
         run: |
-          $v = '${{ needs.guard.outputs.version }}'
-          $src = Join-Path 'dist/${{ matrix.rid }}' '${{ matrix.built }}'
+          $src = Join-Path "dist/$env:RID" $env:BUILT
           if (-not (Test-Path $src)) { throw "publish produced no $src" }
           New-Item -ItemType Directory -Force -Path staged | Out-Null
-          Move-Item $src (Join-Path 'staged' "CollectiveWiki-$v-${{ matrix.rid }}${{ matrix.asset_ext }}")
-      - uses: actions/upload-artifact@v4
+          Move-Item $src (Join-Path 'staged' "CollectiveWiki-$env:VERSION-$env:RID$env:ASSET_EXT")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: ${{ matrix.rid }}
           path: staged/CollectiveWiki-*
@@ -65,31 +91,42 @@ jobs:
   draft:
     needs: [guard, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: staged
           merge-multiple: true
       - name: Generate manifest
         shell: pwsh
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           ./build/make-manifest.ps1 `
-            -Version '${{ needs.guard.outputs.version }}' `
-            -Tag '${{ github.ref_name }}' `
-            -Repo '${{ github.repository }}' `
+            -Version $env:VERSION `
+            -Tag $env:TAG `
+            -Repo $env:REPO `
             -StagedDir staged `
             -OutFile staged/manifest.json
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          gh release create "${{ github.ref_name }}" \
+          gh release create "$TAG" \
             --draft \
-            --title "CollectiveWiki ${{ github.ref_name }}" \
+            --title "CollectiveWiki $TAG" \
             --generate-notes \
             staged/CollectiveWiki-* staged/manifest.json
       - name: Remind that the release is unsigned until signed locally
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          echo "::notice::Draft ${{ github.ref_name }} created WITHOUT a signature."
-          echo "::notice::Run: ./build/sign-release.ps1 -Tag ${{ github.ref_name }}"
+          echo "::notice::Draft $TAG created WITHOUT a signature."
+          echo "::notice::Run: ./build/sign-release.ps1 -Tag $TAG"

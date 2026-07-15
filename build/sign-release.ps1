@@ -3,8 +3,13 @@
 .SYNOPSIS
   Signs a draft release's manifest with the offline key and publishes it.
 .DESCRIPTION
-  Re-verifies CI's hashes against the actual downloaded bytes before signing — CI is not
-  trusted blindly. Publishing IS signing: a release only goes public through this script,
+  Re-verifies CI's hashes against the actual downloaded bytes before signing. This catches an
+  asset swapped BETWEEN manifest generation and signing. It does NOT make CI untrusted: every
+  gate here checks CI's output against CI's OWN manifest, so a compromised runner emitting
+  trojaned binaries plus a matching manifest passes all of them (proven by execution — see the
+  auto-update spec §5.3.1). What local signing actually withholds from CI is SIGNING AUTHORITY,
+  not CODE AUTHORSHIP. That still bounds a stolen push credential, a hostile mirror, and a
+  swapped release asset — it does not bound a malicious CI. Publishing IS signing: a release only goes public through this script,
   so an unsigned release cannot reach users. Three invariants CI cannot be trusted to enforce
   on itself: (1) every downloaded file must be accounted for in the manifest — a rogue asset
   attached by a compromised/buggy CI step must never ride along beside a valid signature —
@@ -48,7 +53,9 @@ try {
     $bytes = [System.IO.File]::ReadAllBytes($manifestPath)
     $manifest = [System.Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json
 
-    if ($manifest.version -ne $Tag.TrimStart('v')) {
+    # -cne, not -ne: PowerShell's default comparison is case-INSENSITIVE, so '1.0.0-RC1' and
+    # '1.0.0-rc1' would compare equal. assert-version.ps1 already uses -cne for this same job.
+    if ($manifest.version -cne (Get-VersionFromTag -Tag $Tag)) {
         throw "Manifest version '$($manifest.version)' does not match tag '$Tag'."
     }
 
