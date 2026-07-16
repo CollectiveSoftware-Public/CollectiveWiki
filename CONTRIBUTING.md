@@ -36,3 +36,16 @@ All `Collective.*` dependencies are vendored in `build/packages/`; no private fe
 ## Security
 
 Please do **not** open a public issue for security vulnerabilities — see [SECURITY.md](SECURITY.md).
+
+## Licensing of contributions
+
+CollectiveWiki is licensed under the GNU General Public License, version 3 or later
+(`GPL-3.0-or-later`). By opening a pull request you agree that your contribution is
+licensed under those same terms (inbound = outbound).
+
+If the project later ships a separate commercial build (for example, an ad-supported
+mobile edition), that build is a distinct proprietary product and will **not**
+incorporate externally-contributed GPL code unless the contributor has signed a
+Contributor License Agreement granting the necessary rights. No CLA is required today —
+contributions are accepted purely under `GPL-3.0-or-later`. If and when a CLA becomes
+necessary, it will be requested explicitly on the pull request.
