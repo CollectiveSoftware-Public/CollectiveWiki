@@ -32,5 +32,6 @@
     <ProjectReference Include="..\Wiki.Core\Wiki.Core.csproj" />
     <ProjectReference Include="..\Wiki.Editor\Wiki.Editor.csproj" />
     <ProjectReference Include="..\Wiki.Sync.Host\Wiki.Sync.Host.csproj" />
+    <ProjectReference Include="..\Wiki.Update\Wiki.Update.csproj" />
   </ItemGroup>
 </Project>
