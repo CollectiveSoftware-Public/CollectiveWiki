@@ -26,6 +26,9 @@ public sealed class SettingsWindow : DialogWindow
         var autosave = new CheckBox { Content = "Autosave notes (idle + on focus loss)", IsChecked = settings.AutosaveEnabled };
         AutomationProperties.SetName(autosave, "Autosave notes");
 
+        var autoUpdate = new CheckBox { Content = "Check for updates automatically", IsChecked = settings.UpdateCheckMode == "Automatic" };
+        AutomationProperties.SetName(autoUpdate, "Check for updates automatically");
+
         var attachments = new TextBox { Text = settings.AttachmentsFolder, Width = 260 };
         AutomationProperties.SetName(attachments, "Attachments folder");
         var templates = new TextBox { Text = settings.TemplatesFolder, Width = 260 };
@@ -37,7 +40,7 @@ public sealed class SettingsWindow : DialogWindow
 
         var dlg = new SettingsWindow
         {
-            Title = "Settings", Width = 440, Height = 380, SizeToContent = SizeToContent.Manual,
+            Title = "Settings", Width = 440, Height = 430, SizeToContent = SizeToContent.Manual,
             Content = new StackPanel
             {
                 Margin = new Thickness(18),
@@ -51,6 +54,8 @@ public sealed class SettingsWindow : DialogWindow
                         Children = { themeSystem, themeLight, themeDark },
                     },
                     autosave,
+                    new TextBlock { Text = "Updates", FontWeight = FontWeight.Bold },
+                    autoUpdate,
                     Labeled("Attachments folder (pasted images)", attachments),
                     Labeled("Templates folder", templates),
                     new StackPanel
@@ -70,6 +75,9 @@ public sealed class SettingsWindow : DialogWindow
             settings.AttachmentsFolder = string.IsNullOrWhiteSpace(attachments.Text) ? "attachments" : attachments.Text.Trim();
             settings.TemplatesFolder = string.IsNullOrWhiteSpace(templates.Text) ? "templates" : templates.Text.Trim();
             settings.AutosaveEnabled = autosave.IsChecked == true;
+            // Only toggle among Automatic/Manual — never silently leave Unset (that needs explicit consent).
+            if (settings.UpdateCheckMode != "Unset")
+                settings.UpdateCheckMode = autoUpdate.IsChecked == true ? "Automatic" : "Manual";
             saved = true;
             dlg.Close();
         };

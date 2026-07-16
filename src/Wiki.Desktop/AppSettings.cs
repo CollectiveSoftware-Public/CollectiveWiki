@@ -29,4 +29,12 @@ public sealed class AppSettings
     public int SyncPort { get; set; } = 8767;
     public int PairingPort { get; set; } = 8768;
     public string? SyncRelayEndpoint { get; set; }
+
+    // --- auto-update (spec §5.5) ---
+    /// <summary>Unset (first run -> consent prompt, no network until answered) | Automatic (startup,
+    /// throttled to once/24h) | Manual (only via Help ▸ Check for Updates).</summary>
+    public string UpdateCheckMode { get; set; } = "Unset";
+    public DateTime? LastUpdateCheckUtc { get; set; }
+    /// <summary>A version the user chose to skip permanently (Skip this version).</summary>
+    public string? SkippedVersion { get; set; }
 }

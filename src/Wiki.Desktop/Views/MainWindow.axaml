@@ -130,6 +130,7 @@
           <MenuItem Header="Settings…" InputGesture="Ctrl+," Click="OnSettings"/>
         </MenuItem>
         <MenuItem Header="_Help">
+          <MenuItem Header="Check for Updates…" Click="OnCheckForUpdates"/>
           <MenuItem Header="About CollectiveWiki" Click="OnAbout"/>
         </MenuItem>
       </Menu>
