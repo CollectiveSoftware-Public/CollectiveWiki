@@ -1,7 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+# Build + test on 3 OSes. Holds no secrets and publishes nothing.
+#
+# Hardening (auto-update spec §9 R7/R8, mirrors release.yml):
+#  - permissions: read-only — this workflow only reads the repo to build and test it.
+#  - persist-credentials:false — checkout otherwise leaves the token in .git/config inside the
+#    job that runs third-party MSBuild/NuGet/test code.
+#  - actions pinned to commit SHAs: a mutable @v4 tag is third-party code inside the TCB. Same
+#    pins as release.yml (v4, proven end-to-end by the live release run).
 name: ci
 
 on: [push, pull_request]
+
+permissions: {}
 
 jobs:
   build-test:
@@ -10,9 +20,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           dotnet-version: '10.0.x'
       - name: Test
