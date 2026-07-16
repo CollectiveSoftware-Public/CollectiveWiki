@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using Avalonia;
 using Avalonia.Controls;
@@ -22,9 +24,11 @@ using Collective.Platform.Controls;
 using Collective.Platform.Secrets;
 using Wiki.Core.Workspace;
 using Wiki.Desktop.Sync;
+using Wiki.Desktop.Update;
 using Wiki.Desktop.ViewModels;
 using Wiki.Editor;
 using Wiki.Sync;
+using Wiki.Update;
 
 namespace Wiki.Desktop.Views;
 
@@ -32,6 +36,8 @@ public partial class MainWindow : Window
 {
     private readonly ISettingsStore _store;
     private readonly AppSettings _settings;
+    private UpdateCoordinator? _updates;
+    private static readonly HttpClient _updateHttp = new() { Timeout = TimeSpan.FromMinutes(10) };
     private string _themeMode = "System";
     private string? _startupVault;
     // Debounced autosave: each edit restarts this one-shot timer; it fires once the note has been idle
@@ -250,6 +256,7 @@ public partial class MainWindow : Window
             _startupVault = null;
             await OpenVaultInThisWindowAsync(v);
         }
+        await MaybeCheckForUpdatesAtStartupAsync();
     }
 
     // Lazily builds the sync host for the currently-open vault, doing the I/O-heavy part — first-time device
@@ -1683,6 +1690,90 @@ public partial class MainWindow : Window
             "A local-first, linked Markdown knowledge base.",
             new[] { "Part of the Collective Software suite.", "GPL-3.0-or-later." }));
     }
+
+    // ---- Auto-update (Plan 2) ----
+
+    // Built lazily: the key-agnostic service gets this app's feed/key/RID/version + real HTTP and applier.
+    private UpdateCoordinator Updates()
+    {
+        if (_updates is not null) return _updates;
+        var appData = new DesktopFileSystem("CollectiveWiki").AppDataDirectory;
+        var stageDir = System.IO.Path.Combine(appData, "updates");
+        var feed = UpdateConfig.BuildFeed(UpdateConfig.CurrentVersion(), UpdateConfig.CurrentRid(), _settings.SkippedVersion);
+        var applier = new FileSwapApplier(
+            launch: path => Process.Start(new ProcessStartInfo(path) { UseShellExecute = false }),
+            exit: code => Environment.Exit(code));
+        var service = new UpdateService(feed, new HttpUpdateDownloader(_updateHttp), applier, stageDir);
+        _updates = new UpdateCoordinator(service, _settings, SaveSettings);
+        return _updates;
+    }
+
+    // Startup: honour the consent gate, then (Automatic + due) check quietly. Failures stay silent here.
+    private async Task MaybeCheckForUpdatesAtStartupAsync()
+    {
+        var coord = Updates();
+        var decision = coord.DecideAuto(DateTime.UtcNow);
+        if (decision == AutoDecision.NeedConsent)
+        {
+            var choice = await UpdateConsentDialog.ShowAsync(this);
+            if (choice == UpdateConsentChoice.NotNow) return;            // stays Unset; asked again next launch
+            coord.RecordConsent(choice == UpdateConsentChoice.Automatic);
+            if (choice == UpdateConsentChoice.Manual) return;           // no check until they ask
+            decision = coord.DecideAuto(DateTime.UtcNow);              // now Automatic -> CheckNow
+        }
+        if (decision != AutoDecision.CheckNow) return;
+        try
+        {
+            var result = await coord.CheckAsync(DateTime.UtcNow, default);
+            if (result is UpdateCheck.Available a) await OfferUpdateAsync(a.Info);
+            // Automatic checks are silent on UpToDate/Failed (spec §6) — no dialog.
+        }
+        catch { /* automatic: swallow; a manual check surfaces failures */ }
+    }
+
+    // Help ▸ Check for Updates — always reports a result, prompting for consent first if still Unset.
+    private async void OnCheckForUpdates(object? sender, RoutedEventArgs e)
+    {
+        var coord = Updates();
+        if (_settings.UpdateCheckMode == "Unset")
+        {
+            var choice = await UpdateConsentDialog.ShowAsync(this);
+            if (choice == UpdateConsentChoice.NotNow) return;
+            coord.RecordConsent(choice == UpdateConsentChoice.Automatic);
+        }
+        UpdateCheck result;
+        try { result = await coord.CheckAsync(DateTime.UtcNow, default); }
+        catch (Exception ex) { await InfoAsync("Update check", "Couldn't check for updates: " + ex.Message); return; }
+
+        switch (result)
+        {
+            case UpdateCheck.Available a: await OfferUpdateAsync(a.Info); break;
+            case UpdateCheck.UpToDate: await InfoAsync("Update check", "You're on the latest version."); break;
+            case UpdateCheck.Failed f: await InfoAsync("Update check", "Couldn't check for updates: " + f.Reason); break;
+        }
+    }
+
+    private async Task OfferUpdateAsync(UpdateInfo info)
+    {
+        var choice = await UpdateAvailableDialog.ShowAsync(this, info.Version, info.NotesUrl);
+        if (choice == UpdateChoice.Skip) { Updates().SkipVersion(info.Version); _updates = null; return; }
+        if (choice != UpdateChoice.UpdateNow) return;
+
+        if (!await PromptSaveDirtyNoteTabsAsync()) return;                // save open work before the restart
+        StagedUpdate? staged;
+        try { staged = await Updates().DownloadAsync(info); }
+        catch (Exception ex) { await InfoAsync("Update", "Download failed: " + ex.Message); return; }
+        if (staged is null) { await InfoAsync("Update", "The download could not be verified and was discarded."); return; }
+
+        var outcome = Updates().Apply(staged, UpdateConfig.CurrentExePath());
+        // Apply restarts the process on success; reaching here means it did not.
+        await InfoAsync("Update", outcome == ApplyOutcome.NotWritable
+            ? "This install location is not writable. Download the new version from the releases page."
+            : "The update could not be applied. Your current version is unchanged.");
+    }
+
+    private Task InfoAsync(string title, string message)
+        => AboutDialog.ShowAsync(this, new AboutDialogModel(title, null, message, System.Array.Empty<string>()));
 
     // ---- Window state ----
     // Geometry restore-before-show + persist-on-close is now handled by WindowStateService
