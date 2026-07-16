@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Rejects any tracked file that matches an active proprietary-path denylist
+# (.github/proprietary-paths). Preventive: the denylist is empty today. Read-only.
+name: proprietary-guard
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+      - name: Self-test the path checker
+        run: python .github/scripts/test_check_proprietary_paths.py
+      - name: Assert no proprietary path exists in the tree
+        run: git ls-files | python .github/scripts/check_proprietary_paths.py .github/proprietary-paths

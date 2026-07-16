@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Proprietary-path denylist (read by .github/scripts/check_proprietary_paths.py).
+# One fnmatch glob per line; blank lines and '#' comments ignored. Any tracked
+# file matching an active line is REJECTED from the public repo by the
+# proprietary-guard workflow. This list is intentionally EMPTY today -- there is
+# no closed code yet. Add patterns here when proprietary modules are introduced
+# in Internal, e.g.:
+#   src/Wiki.Ads/**
+#   **/*.Commercial/**
