@@ -10,7 +10,7 @@
     <Authors>CollectiveWiki contributors</Authors>
     <Product>CollectiveWiki</Product>
     <!-- The release tag asserts this value (build/assert-version.ps1); bump here, then tag vX.Y.Z. -->
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
     <Copyright>Copyright (C) CollectiveWiki contributors</Copyright>
   </PropertyGroup>
