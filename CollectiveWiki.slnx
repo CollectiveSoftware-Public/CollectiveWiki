@@ -8,6 +8,7 @@
     <Project Path="src/Wiki.Sync/Wiki.Sync.csproj" />
     <Project Path="src/Wiki.Sync.Transport/Wiki.Sync.Transport.csproj" />
     <Project Path="src/Wiki.Sync.Host/Wiki.Sync.Host.csproj" />
+    <Project Path="src/Wiki.Update/Wiki.Update.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Wiki.Core.Tests/Wiki.Core.Tests.csproj" />
@@ -17,5 +18,6 @@
     <Project Path="tests/Wiki.Sync.Tests/Wiki.Sync.Tests.csproj" />
     <Project Path="tests/Wiki.Sync.Transport.Tests/Wiki.Sync.Transport.Tests.csproj" />
     <Project Path="tests/Wiki.Sync.Host.Tests/Wiki.Sync.Host.Tests.csproj" />
+    <Project Path="tests/Wiki.Update.Tests/Wiki.Update.Tests.csproj" />
   </Folder>
 </Solution>
