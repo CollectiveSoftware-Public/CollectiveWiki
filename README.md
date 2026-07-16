@@ -48,8 +48,8 @@ the project instead** — and you can check it yourself.
 ### Verify your download
 
 Every release ships `manifest.json` (the version plus a SHA-256 for each binary) and `manifest.json.sig`
-(an ECDSA P-256 signature over that manifest). Verifying proves the binary came from us and wasn't
-altered in transit.
+(an ECDSA P-256 signature over that manifest). Verifying proves the binary matches what the keyholder
+signed and wasn't altered in transit.
 
 This project's public signing key:
 
@@ -77,8 +77,12 @@ Note the verifier and the public key both come from this repo, so verification p
 (a swapped asset, a hostile mirror, a corrupted transfer) rather than protecting you from this repo
 itself. That's the honest boundary.
 
-The signing key is held offline and never touches CI, so a stolen push token, a hostile mirror, or a
-swapped release asset cannot produce a release that verifies — an attacker would need the key itself.
+The signing key is held offline and never touches CI. So as long as you have the project's genuine key,
+a hostile mirror or a swapped release asset cannot produce binaries that verify against it — forging those
+would need the key itself, which never leaves the maintainer's machine. The catch is *getting* the genuine
+key: the copy above lives in this repo, so an attacker who could rewrite this repo could also swap the key.
+Verification protects your download against tampering in transit; it is not a defense against this repo
+itself being compromised (see the boundary above).
 
 To be precise about what this does *not* cover: the binaries are built by GitHub Actions, so a
 compromise of this repository or of the build pipeline could produce a *genuinely signed* release.
