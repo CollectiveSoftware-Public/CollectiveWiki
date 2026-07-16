@@ -40,4 +40,16 @@ public class ApplierTests
         var cur = Path.Combine(dir, "App.exe"); File.WriteAllText(cur, "x");
         Assert.True(new FileSwapApplier(_ => { }, _ => { }).IsInstallDirWritable(cur));
     }
+
+    [Fact] public void Apply_returns_Failed_not_throws_when_the_first_rename_fails()
+    {
+        var dir = TempDir();
+        var cur = Path.Combine(dir, "App.exe");                        // deliberately NOT created -> cur->old move throws
+        var stagedPath = Path.Combine(dir, "1.1.1-win-x64"); File.WriteAllText(stagedPath, "NEW");
+        var applier = new FileSwapApplier(_ => { }, _ => { });
+        var outcome = applier.Apply(new StagedUpdate(stagedPath, "1.1.1"), cur);
+        Assert.Equal(ApplyOutcome.Failed, outcome);                   // caught and reported, not thrown
+        Assert.False(File.Exists(cur));                               // nothing conjured
+        Assert.False(File.Exists(cur + ".old"));                     // no stray .old
+    }
 }

@@ -5,7 +5,8 @@ namespace Wiki.Update;
 
 /// <summary>Applies an update by an atomic single-file swap (spec §5.4). The launch and process-exit are
 /// injected so the swap is unit-testable without actually restarting. Failure mode is always "nothing
-/// happened", never "no app": a failed move undoes the .old rename.</summary>
+/// happened", never "no app": every move — including the very first rename — is inside the guarded
+/// block, and a failure restores the original and returns an outcome rather than throwing.</summary>
 public sealed class FileSwapApplier(Action<string> launch, Action<int> exit) : IUpdateApplier
 {
     public bool IsInstallDirWritable(string currentExePath)
@@ -28,16 +29,19 @@ public sealed class FileSwapApplier(Action<string> launch, Action<int> exit) : I
         var old = cur + ".old";
         try { if (File.Exists(old)) File.Delete(old); } catch { /* stale .old; best effort */ }
 
-        File.Move(cur, old);                       // running exe can be renamed
         try
         {
+            File.Move(cur, old);                       // running exe can be renamed
             File.Move(staged.FilePath, cur);
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 File.SetUnixFileMode(cur, UnixFileModeExecutable());
         }
         catch
         {
-            try { File.Move(old, cur); } catch { /* leave .old for recovery */ }  // undo
+            // Undo: if the original was moved aside and the new file is not in place, restore it.
+            // Holds even if the very first rename threw (old absent -> nothing to undo, cur intact).
+            if (File.Exists(old) && !File.Exists(cur))
+                try { File.Move(old, cur); } catch { /* leave .old for next-launch recovery */ }
             return ApplyOutcome.Failed;
         }
         launch(cur);

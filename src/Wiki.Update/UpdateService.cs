@@ -10,13 +10,18 @@ namespace Wiki.Update;
 public sealed class UpdateService(
     UpdateFeed feed, IUpdateDownloader downloader, IUpdateApplier applier, string stageDir) : IUpdateService
 {
+    // The manifest is a small JSON and the signature is 88 base64 chars; cap both far below any level
+    // that could exhaust memory, so a hostile response cannot OOM the app before the signature is checked.
+    private const long ManifestMaxBytes = 4L * 1024 * 1024;
+    private const long SignatureMaxBytes = 64L * 1024;
+
     public async Task<UpdateCheck> CheckAsync(CancellationToken ct)
     {
         byte[] manifestBytes, sigBytes;
         try
         {
-            manifestBytes = await downloader.GetBytesAsync(feed.ManifestUrl, null, ct);
-            sigBytes = await downloader.GetBytesAsync(feed.SignatureUrl, null, ct);
+            manifestBytes = await downloader.GetBytesAsync(feed.ManifestUrl, ManifestMaxBytes, null, ct);
+            sigBytes = await downloader.GetBytesAsync(feed.SignatureUrl, SignatureMaxBytes, null, ct);
         }
         catch (Exception e) { return new UpdateCheck.Failed($"fetch failed: {e.Message}"); }
 

@@ -11,7 +11,7 @@ public class UpdateServiceTests
     sealed class MapDownloader(Dictionary<string, byte[]> map) : IUpdateDownloader
     {
         public List<Uri> Fetched { get; } = new();
-        public Task<byte[]> GetBytesAsync(Uri url, IProgress<double>? p, CancellationToken ct)
+        public Task<byte[]> GetBytesAsync(Uri url, long maxBytes, IProgress<double>? p, CancellationToken ct)
         {
             Fetched.Add(url);
             return map.TryGetValue(url.ToString(), out var b)
