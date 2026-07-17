@@ -65,32 +65,56 @@ public partial class SyncViewModel : ObservableObject, IDisposable
         RefreshCollaborators();
     }
 
-    /// <summary>Bind the serve + accept-pairing listeners (dual-stack on <see cref="IPAddress.IPv6Any"/>, so
-    /// both IPv4-mapped and IPv6 dialers can reach us) and start the auto-pull loop. Ports default to 0
-    /// (OS-assigned) for tests; the head passes the configured ports. When <paramref name="internetEnabled"/>,
-    /// also gather this device's global IPv6 + UPnP/NAT-PMP-mapped candidates in the background so
-    /// <see cref="AddCollaborator"/> can advertise them. Returns the bound sync endpoint (its address is the
-    /// unspecified <c>::</c> — only the port is meaningful).</summary>
+    /// <summary>Bind the serve + accept-pairing listeners and start the auto-pull loop. The bind family is gated
+    /// on <paramref name="internetEnabled"/>: when off we bind IPv4 (<see cref="IPAddress.Any"/>) only — the
+    /// pre-branch behavior, so an opt-out never leaves an internet-facing port on the host's global IPv6; when on
+    /// we bind dual-stack (<see cref="IPAddress.IPv6Any"/>) so both IPv4-mapped and IPv6 dialers can reach us,
+    /// falling back to IPv4 on a host with no IPv6 stack. Ports default to 0 (OS-assigned) for tests; the head
+    /// passes the configured ports. The fast local candidates (LAN + global IPv6) are gathered synchronously so
+    /// the first <see cref="AddCollaborator"/> invite carries them; only when <paramref name="internetEnabled"/>
+    /// is the slow UPnP/NAT-PMP mapping gathered in the background and appended once it lands. Returns the bound
+    /// sync endpoint.</summary>
     public IPEndPoint StartServing(int pairingPort = 0, int syncPort = 0, bool internetEnabled = false, TimeSpan? autoPullEvery = null)
     {
         if (IsSharing) return SyncEndpoint!;
         _syncListener = new SyncListener(_service.Identity, _service.BuildSyncServer(), _service.AcceptPeer);
-        SyncEndpoint = _syncListener.Start(new IPEndPoint(IPAddress.IPv6Any, syncPort));
+        SyncEndpoint = BindListener(_syncListener.Start, syncPort, internetEnabled);
         _pairingListener = new PairingListener(_service.Identity, ServePairingAsync);
-        PairingEndpoint = _pairingListener.Start(new IPEndPoint(IPAddress.IPv6Any, pairingPort));
+        PairingEndpoint = BindListener(_pairingListener.Start, pairingPort, internetEnabled);
         IsSharing = true;
         Status = SyncStatus.Idle;
 
-        // Gather advertisable candidates off-thread; AddCollaborator reads whatever has landed (falling back to
-        // a fresh LAN-only candidate if the gather has not finished yet).
-        _ = Task.Run(async () =>
+        // The first invite must carry the fast, local candidates (LAN IPv4 + global IPv6) — both are instant, no
+        // network wait — so gather them synchronously here, before AddCollaborator can be called.
+        _localCandidates = _endpoints.GatherLocal(PairingEndpoint.Port, SyncEndpoint.Port, internetEnabled);
+
+        // Only the slow UPnP/NAT-PMP mapping runs off-thread, and only when internet sync is on; when it lands we
+        // swap in the full candidate set (LAN + IPv6 + the mapped public IPv4). Off = no background gather.
+        if (internetEnabled)
         {
-            var cands = await _endpoints.GatherAsync(PairingEndpoint!.Port, SyncEndpoint!.Port, internetEnabled, CancellationToken.None);
-            _dispatch(() => _localCandidates = cands);
-        });
+            _ = Task.Run(async () =>
+            {
+                var cands = await _endpoints.GatherAsync(PairingEndpoint!.Port, SyncEndpoint!.Port, internetEnabled, CancellationToken.None);
+                _dispatch(() => _localCandidates = cands);
+            });
+        }
 
         StartAutoPull(autoPullEvery ?? TimeSpan.FromSeconds(30));
         return SyncEndpoint;
+    }
+
+    /// <summary>Bind one listener with the family gated on the internet-sync opt-in. OFF binds IPv4
+    /// (<see cref="IPAddress.Any"/>) only — no internet-facing port. ON binds dual-stack
+    /// (<see cref="IPAddress.IPv6Any"/>), falling back to IPv4 when the host has no IPv6 stack (the dual-stack
+    /// bind throws <see cref="System.Net.Sockets.SocketException"/>).</summary>
+    private static IPEndPoint BindListener(Func<IPEndPoint, IPEndPoint> start, int port, bool internetEnabled)
+    {
+        if (internetEnabled)
+        {
+            try { return start(new IPEndPoint(IPAddress.IPv6Any, port)); }
+            catch (System.Net.Sockets.SocketException) { /* no IPv6 stack — fall back to IPv4 */ }
+        }
+        return start(new IPEndPoint(IPAddress.Any, port));
     }
 
     public void StopServing()

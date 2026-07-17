@@ -24,6 +24,13 @@ public class PublicEndpointProviderTests
             => Task.FromResult<PortMapping?>(new PortMapping("203.0.113.9", internalPort));
     }
 
+    // Proves the synchronous GatherLocal path never performs a UPnP mapping — invoking the mapper throws.
+    private sealed class ThrowingMapper : IPortMapper
+    {
+        public Task<PortMapping?> TryMapAsync(int internalPort, TimeSpan timeout, CancellationToken ct)
+            => throw new InvalidOperationException("GatherLocal must not perform UPnP mapping");
+    }
+
     private static PublicEndpointProvider Provider(PortMapping? map, IEnumerable<IPAddress> v6)
         => new(new FakeMapper(map), () => v6, () => "192.168.1.5");
 
@@ -57,5 +64,31 @@ public class PublicEndpointProviderTests
         var p = Provider(map: null, v6: Array.Empty<IPAddress>());
         var cands = await p.GatherAsync(8768, 8767, internetEnabled: true, CancellationToken.None);
         Assert.Equal(new SyncCandidate("192.168.1.5", 8768, 8767), Assert.Single(cands));
+    }
+
+    // GatherLocal is the fast, synchronous path the first invite carries: LAN (+ global IPv6 when enabled),
+    // never any UPnP mapping.
+
+    [Fact]
+    public void GatherLocal_disabled_is_lan_only_and_never_maps()
+    {
+        var p = new PublicEndpointProvider(new ThrowingMapper(),
+            () => new[] { IPAddress.Parse("2001:db8::1") }, () => "192.168.1.5");
+        var only = Assert.Single(p.GatherLocal(8768, 8767, internetEnabled: false));
+        Assert.Equal(new SyncCandidate("192.168.1.5", 8768, 8767), only);
+    }
+
+    [Fact]
+    public void GatherLocal_enabled_adds_global_ipv6_drops_link_local_and_never_maps()
+    {
+        var p = new PublicEndpointProvider(new ThrowingMapper(),
+            () => new[] { IPAddress.Parse("fe80::1"), IPAddress.Parse("2001:db8::1") },
+            () => "192.168.1.5");
+        var cands = p.GatherLocal(8768, 8767, internetEnabled: true);
+        Assert.Equal(new[]
+        {
+            new SyncCandidate("192.168.1.5", 8768, 8767),
+            new SyncCandidate("2001:db8::1", 8768, 8767),
+        }, cands);
     }
 }

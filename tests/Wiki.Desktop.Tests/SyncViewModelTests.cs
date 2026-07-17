@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Net.Sockets;
 using Wiki.Core.Sync;
 using Wiki.Desktop.Sync;
 using Wiki.Sync;
@@ -79,5 +80,18 @@ public class SyncViewModelTests : IDisposable
         using var vm = Open(NewVault());
         await vm.ShareVaultAsync("Ada", "ada@x");
         Assert.Throws<InvalidOperationException>(() => vm.AddCollaborator(PeerRole.ReadWrite, TimeSpan.FromHours(1)));
+    }
+
+    // Security-critical (the merge-blocking CRITICAL fix): with internet sync OFF, the listeners must bind IPv4
+    // (IPAddress.Any) only — never the host's global IPv6 (IPv6Any) — so opting out truly leaves no
+    // internet-facing port. See SyncViewModel.BindListener.
+    [Fact]
+    public void Off_state_binds_the_listeners_to_ipv4_only()
+    {
+        using var vm = Open(NewVault());
+        var sync = vm.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: false);
+        Assert.Equal(AddressFamily.InterNetwork, sync.AddressFamily);
+        Assert.Equal(AddressFamily.InterNetwork, vm.SyncEndpoint!.AddressFamily);
+        Assert.Equal(AddressFamily.InterNetwork, vm.PairingEndpoint!.AddressFamily);
     }
 }

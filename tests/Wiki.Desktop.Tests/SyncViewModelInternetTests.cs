@@ -54,8 +54,12 @@ public class SyncViewModelInternetTests : IDisposable
             () => Now, endpoints: LoopbackEndpoints());
 
         await owner.ShareVaultAsync("Ada", "ada@x");
-        owner.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: false);
-        await gathered.Task;   // owner's invite now advertises the reachable loopback candidate
+        // internetEnabled: true so the owner binds dual-stack (IPv6Any) AND runs the background UPnP gather whose
+        // dispatch signals `gathered`. GatherLocal already lands the loopback candidate synchronously, so the
+        // invite is reachable the moment StartServing returns; the await just makes the background gather
+        // deterministic. The joiner only needs to be dialable back over loopback, so it stays IPv4-only.
+        owner.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: true);
+        await gathered.Task;   // owner's invite advertises the reachable loopback candidate
         var joinerSync = joiner.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: false);
 
         var invite = owner.AddCollaborator(PeerRole.ReadWrite, TimeSpan.FromHours(1));

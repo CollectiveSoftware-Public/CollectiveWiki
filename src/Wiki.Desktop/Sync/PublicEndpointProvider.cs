@@ -29,13 +29,25 @@ public sealed class PublicEndpointProvider
         _lanIPv4 = lanIPv4;
     }
 
-    public async Task<IReadOnlyList<SyncCandidate>> GatherAsync(int pairingPort, int syncPort, bool internetEnabled, CancellationToken ct)
+    /// <summary>The fast candidates that need no network round-trip: LAN IPv4 always, plus this device's global
+    /// IPv6 addresses when internet sync is on. Both are read synchronously off local NIC state, so the caller
+    /// can advertise them in the very first invite (before the slow UPnP mapping in <see cref="GatherAsync"/> has
+    /// finished). No UPnP, no async.</summary>
+    public IReadOnlyList<SyncCandidate> GatherLocal(int pairingPort, int syncPort, bool internetEnabled)
     {
         var list = new List<SyncCandidate> { new(_lanIPv4(), pairingPort, syncPort) };
         if (!internetEnabled) return list;
 
         foreach (var v6 in _globalV6().Where(AddressScope.IsGlobal))
             list.Add(new SyncCandidate(v6.ToString(), pairingPort, syncPort));
+
+        return list;
+    }
+
+    public async Task<IReadOnlyList<SyncCandidate>> GatherAsync(int pairingPort, int syncPort, bool internetEnabled, CancellationToken ct)
+    {
+        var list = new List<SyncCandidate>(GatherLocal(pairingPort, syncPort, internetEnabled));
+        if (!internetEnabled) return list;
 
         var timeout = TimeSpan.FromSeconds(5);
         var pair = await _mapper.TryMapAsync(pairingPort, timeout, ct);
