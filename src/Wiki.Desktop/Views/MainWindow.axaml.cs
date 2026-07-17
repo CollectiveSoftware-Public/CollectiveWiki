@@ -298,7 +298,7 @@ public partial class MainWindow : Window
         {
             // A second window sharing another vault would try to bind the same sync/pairing port; degrade
             // to a non-serving state rather than crashing (concurrent multi-vault sync is a follow-up).
-            try { sync.StartServing(IPAddress.Any, _settings.PairingPort, _settings.SyncPort); }
+            try { sync.StartServing(_settings.PairingPort, _settings.SyncPort, _settings.InternetSyncEnabled); }
             catch (SocketException) { /* port already served by another window — leave this vault un-shared */ }
         }
         UpdateSyncStatusText();
@@ -1204,7 +1204,7 @@ public partial class MainWindow : Window
             }
             try
             {
-                if (!sync.IsSharing) sync.StartServing(IPAddress.Any, _settings.PairingPort, _settings.SyncPort);
+                if (!sync.IsSharing) sync.StartServing(_settings.PairingPort, _settings.SyncPort, _settings.InternetSyncEnabled);
             }
             catch (SocketException)
             {
@@ -1283,7 +1283,7 @@ public partial class MainWindow : Window
                 _sync = null;
                 UpdateSyncStatusText();
                 if (await EnsureSyncAsync() is not { } sync) return PairingOutcome.WrongVault;
-                if (!sync.IsSharing) sync.StartServing(IPAddress.Any, _settings.PairingPort, _settings.SyncPort);
+                if (!sync.IsSharing) sync.StartServing(_settings.PairingPort, _settings.SyncPort, _settings.InternetSyncEnabled);
 
                 var outcome = await sync.JoinAsync(form.Invite, form.Name, form.Email, form.HostOverride);
                 if (outcome == PairingOutcome.Accepted)

@@ -55,7 +55,7 @@ public class SyncViewModelTests : IDisposable
             dispatch: a => { Interlocked.Increment(ref dispatched); a(); });
 
         await vm.ShareVaultAsync("Ada", "ada@x");
-        vm.StartServing(System.Net.IPAddress.Loopback, autoPullEvery: TimeSpan.FromMilliseconds(30));
+        vm.StartServing(autoPullEvery: TimeSpan.FromMilliseconds(30));
 
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (Volatile.Read(ref dispatched) < 2 && DateTime.UtcNow < deadline)

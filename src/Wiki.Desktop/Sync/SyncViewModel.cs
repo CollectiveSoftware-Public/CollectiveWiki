@@ -20,18 +20,22 @@ public partial class SyncViewModel : ObservableObject, IDisposable
     private readonly VaultSyncService _service;
     private readonly Func<DateTimeOffset> _clock;
     private readonly Action<Action> _dispatch;
-    private readonly Dictionary<string, IPEndPoint> _peerSyncEndpoints = new();
+    private readonly PublicEndpointProvider _endpoints;
+    private readonly Dictionary<string, IReadOnlyList<IPEndPoint>> _peerSyncEndpoints = new();
     private readonly Dictionary<string, CollaboratorRow> _rows = new();
 
+    private IReadOnlyList<SyncCandidate> _localCandidates = Array.Empty<SyncCandidate>();
     private SyncListener? _syncListener;
     private PairingListener? _pairingListener;
     private CancellationTokenSource? _autoPull;
 
-    public SyncViewModel(VaultSyncService service, Func<DateTimeOffset>? clock = null, Action<Action>? dispatch = null)
+    public SyncViewModel(VaultSyncService service, Func<DateTimeOffset>? clock = null, Action<Action>? dispatch = null,
+        PublicEndpointProvider? endpoints = null)
     {
         _service = service;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _dispatch = dispatch ?? (a => a());
+        _endpoints = endpoints ?? new PublicEndpointProvider();
         RefreshCollaborators();
     }
 
@@ -61,17 +65,30 @@ public partial class SyncViewModel : ObservableObject, IDisposable
         RefreshCollaborators();
     }
 
-    /// <summary>Bind the serve + accept-pairing listeners and start the auto-pull loop. Ports default to 0
-    /// (OS-assigned) for tests; the head passes the configured ports. Returns the bound sync endpoint.</summary>
-    public IPEndPoint StartServing(IPAddress bind, int pairingPort = 0, int syncPort = 0, TimeSpan? autoPullEvery = null)
+    /// <summary>Bind the serve + accept-pairing listeners (dual-stack on <see cref="IPAddress.IPv6Any"/>, so
+    /// both IPv4-mapped and IPv6 dialers can reach us) and start the auto-pull loop. Ports default to 0
+    /// (OS-assigned) for tests; the head passes the configured ports. When <paramref name="internetEnabled"/>,
+    /// also gather this device's global IPv6 + UPnP/NAT-PMP-mapped candidates in the background so
+    /// <see cref="AddCollaborator"/> can advertise them. Returns the bound sync endpoint (its address is the
+    /// unspecified <c>::</c> — only the port is meaningful).</summary>
+    public IPEndPoint StartServing(int pairingPort = 0, int syncPort = 0, bool internetEnabled = false, TimeSpan? autoPullEvery = null)
     {
         if (IsSharing) return SyncEndpoint!;
         _syncListener = new SyncListener(_service.Identity, _service.BuildSyncServer(), _service.AcceptPeer);
-        SyncEndpoint = _syncListener.Start(new IPEndPoint(bind, syncPort));
+        SyncEndpoint = _syncListener.Start(new IPEndPoint(IPAddress.IPv6Any, syncPort));
         _pairingListener = new PairingListener(_service.Identity, ServePairingAsync);
-        PairingEndpoint = _pairingListener.Start(new IPEndPoint(bind, pairingPort));
+        PairingEndpoint = _pairingListener.Start(new IPEndPoint(IPAddress.IPv6Any, pairingPort));
         IsSharing = true;
         Status = SyncStatus.Idle;
+
+        // Gather advertisable candidates off-thread; AddCollaborator reads whatever has landed (falling back to
+        // a fresh LAN-only candidate if the gather has not finished yet).
+        _ = Task.Run(async () =>
+        {
+            var cands = await _endpoints.GatherAsync(PairingEndpoint!.Port, SyncEndpoint!.Port, internetEnabled, CancellationToken.None);
+            _dispatch(() => _localCandidates = cands);
+        });
+
         StartAutoPull(autoPullEvery ?? TimeSpan.FromSeconds(30));
         return SyncEndpoint;
     }
@@ -85,12 +102,17 @@ public partial class SyncViewModel : ObservableObject, IDisposable
         IsSharing = false;
     }
 
-    /// <summary>Mint a role-tagged invite embedding our LAN endpoint as the discovery hint. Must be serving.</summary>
+    /// <summary>Mint a role-tagged invite whose discovery hint carries our full advertisable candidate set
+    /// (LAN always; global IPv6 + public IPv4 when internet sync is on). Falls back to a fresh LAN-only
+    /// candidate if the background gather has not landed yet. Must be serving.</summary>
     public string AddCollaborator(PeerRole role, TimeSpan validFor)
     {
         if (PairingEndpoint is null || SyncEndpoint is null)
             throw new InvalidOperationException("start serving before adding a collaborator");
-        var hint = SyncDiscoveryHint.Format(LanEndpoints.LocalIPv4(), PairingEndpoint.Port, SyncEndpoint.Port);
+        var candidates = _localCandidates.Count > 0
+            ? _localCandidates
+            : new[] { new SyncCandidate(LanEndpoints.LocalIPv4(), PairingEndpoint.Port, SyncEndpoint.Port) };
+        var hint = SyncDiscoveryHint.FormatMany(candidates);
         LastInvite = _service.AddCollaborator(role, _clock().Add(validFor), hint);
         return LastInvite;
     }
@@ -121,23 +143,48 @@ public partial class SyncViewModel : ObservableObject, IDisposable
 
     // ---- joiner ---------------------------------------------------------
 
-    /// <summary>Paste-to-join: dial the owner (host from the invite, or <paramref name="hostOverride"/>), pair
-    /// over the wire, then do the initial sync. Returns the pairing outcome.</summary>
+    /// <summary>Paste-to-join: dial the owner over the invite's candidate ladder (LAN → global IPv6 → public
+    /// IPv4, in advertised order; a <paramref name="hostOverride"/> is tried first), pair over the wire, then do
+    /// the initial sync. No relay tier in v1. Maps a dial failure to <see cref="PairingOutcome.NoRoute"/> when
+    /// the owner advertised nothing globally reachable (LAN-only), or <see cref="PairingOutcome.OwnerUnreachable"/>
+    /// when it advertised a global candidate but none connected. Returns the pairing outcome.</summary>
     public async Task<PairingOutcome> JoinAsync(string invite, string name, string email, string? hostOverride = null)
     {
         if (!InviteCodec.TryParse(invite, out var payload) || payload is null) return PairingOutcome.WrongVault;
-        if (!SyncDiscoveryHint.TryParse(payload.DiscoveryHint, out var host, out var pairPort, out var syncPort))
-            return PairingOutcome.WrongVault;
-        var dialHost = string.IsNullOrWhiteSpace(hostOverride) ? host : hostOverride!;
-        if (!IPAddress.TryParse(dialHost, out var addr)) return PairingOutcome.WrongVault;
+        if (!SyncDiscoveryHint.TryParseMany(payload.DiscoveryHint, out var hintCands)) return PairingOutcome.WrongVault;
+
+        // Build the pairing + sync ladders (in advertised order). A host override, when supplied, is tried first
+        // on the first candidate's ports — the manual escape hatch for a LAN peer whose advertised address we
+        // cannot reach (so it must cover the initial sync too, not just pairing).
+        var pairing = new List<IPEndPoint>();
+        var sync = new List<IPEndPoint>();
+        var anyGlobal = false;
+        if (!string.IsNullOrWhiteSpace(hostOverride) && IPAddress.TryParse(hostOverride, out var ov))
+        {
+            pairing.Add(new IPEndPoint(ov, hintCands[0].PairingPort));
+            sync.Add(new IPEndPoint(ov, hintCands[0].SyncPort));
+        }
+        foreach (var c in hintCands)
+        {
+            if (!IPAddress.TryParse(c.Host, out var addr)) continue;   // hints carry literal IPs
+            anyGlobal |= AddressScope.IsGlobal(addr);
+            pairing.Add(new IPEndPoint(addr, c.PairingPort));
+            sync.Add(new IPEndPoint(addr, c.SyncPort));
+        }
+        if (pairing.Count == 0) return PairingOutcome.NoRoute;
 
         PairingOutcome outcome;
-        using (var conn = await PeerConnector.ConnectAsync(_service.Identity, payload.OwnerDeviceId, new IPEndPoint(addr, pairPort), relay: null))
+        try
+        {
+            using var conn = await PeerConnector.ConnectAsync(_service.Identity, payload.OwnerDeviceId, pairing);
             outcome = await _service.RequestPairingAsync(conn, invite, name, email);
+        }
+        catch (InvalidOperationException) { return PairingOutcome.NoRoute; }   // nothing dialable to try
+        catch { return anyGlobal ? PairingOutcome.OwnerUnreachable : PairingOutcome.NoRoute; }
 
         if (outcome == PairingOutcome.Accepted)
         {
-            RememberPeer(payload.OwnerDeviceId, new IPEndPoint(addr, syncPort));
+            RememberPeer(payload.OwnerDeviceId, sync);   // remember the owner's full sync ladder
             RefreshCollaborators();
             await SyncNowAsync();   // initial sync
         }
@@ -146,7 +193,10 @@ public partial class SyncViewModel : ObservableObject, IDisposable
 
     // ---- sync -----------------------------------------------------------
 
-    public void RememberPeer(string deviceId, IPEndPoint syncEndpoint) => _peerSyncEndpoints[deviceId] = syncEndpoint;
+    public void RememberPeer(string deviceId, IReadOnlyList<IPEndPoint> endpoints) => _peerSyncEndpoints[deviceId] = endpoints;
+
+    /// <summary>Single-endpoint convenience for callers (and tests) that know exactly one return address.</summary>
+    public void RememberPeer(string deviceId, IPEndPoint endpoint) => RememberPeer(deviceId, new[] { endpoint });
 
     /// <summary>Reflect local/offline edits into the replica so peers pulling us see them (also keeps our
     /// served content fresh). Call after a note save. Runs off the UI thread.</summary>
@@ -162,11 +212,11 @@ public partial class SyncViewModel : ObservableObject, IDisposable
 
         Status = SyncStatus.Syncing;
         var reachable = false;
-        foreach (var (deviceId, ep) in _peerSyncEndpoints.ToArray())
+        foreach (var (deviceId, endpoints) in _peerSyncEndpoints.ToArray())
         {
             try
             {
-                using var conn = await PeerConnector.ConnectAsync(_service.Identity, deviceId, ep, relay: null);
+                using var conn = await PeerConnector.ConnectAsync(_service.Identity, deviceId, endpoints);
                 await _service.PullFromAsync(conn, _clock());
                 reachable = true;
                 MarkPeer(deviceId, online: true);

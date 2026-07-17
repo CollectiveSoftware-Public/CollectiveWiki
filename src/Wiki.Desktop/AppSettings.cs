@@ -29,6 +29,10 @@ public sealed class AppSettings
     public int SyncPort { get; set; } = 8767;
     public int PairingPort { get; set; } = 8768;
     public string? SyncRelayEndpoint { get; set; }
+    /// <summary>When true, sharing also advertises this device's globally reachable candidates (global IPv6 +
+    /// a UPnP/NAT-PMP-mapped public IPv4) in invites, so collaborators can pair directly over the internet with
+    /// no relay. Off by default: sharing stays LAN-only until the user opts in.</summary>
+    public bool InternetSyncEnabled { get; set; }
 
     // --- auto-update (spec §5.5) ---
     /// <summary>Unset (first run -> consent prompt, no network until answered) | Automatic (startup,
