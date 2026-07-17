@@ -1647,12 +1647,33 @@ public partial class MainWindow : Window
 
     private async void OnSettings(object? sender, RoutedEventArgs e)
     {
+        // The dialog mutates _settings in place, so capture the internet-sync posture before it opens to tell
+        // whether the user toggled it.
+        var wasInternetSync = _settings.InternetSyncEnabled;
         if (await SettingsWindow.ShowAsync(this, _settings))
         {
             SaveSettings();
             ApplyThemeMode(_settings.ThemeMode);
             Vm?.ApplyPreferences(_settings.AttachmentsFolder, _settings.TemplatesFolder);
+            if (_settings.InternetSyncEnabled != wasInternetSync)
+                await ApplyInternetSyncChangeAsync();
         }
+    }
+
+    // Re-bind the sync listeners so an internet-sync toggle takes effect immediately, without an app restart.
+    // Turning it ON re-binds dual-stack and opens the firewall + UPnP mapping (via StartServing's reachability
+    // work); turning it OFF releases the firewall admission and re-binds IPv4-only so LAN sync keeps working
+    // while the internet-facing port is closed. The peer set survives the stop/start (StopServing keeps it), so
+    // collaborators are not dropped. If we're not currently sharing there's nothing bound to re-do — the new
+    // value applies the next time StartServing runs.
+    private async Task ApplyInternetSyncChangeAsync()
+    {
+        if (_sync is not { IsSharing: true } sync) return;
+        sync.StopServing();
+        if (!_settings.InternetSyncEnabled) await sync.RemoveInternetReachabilityAsync();
+        try { sync.StartServing(_settings.PairingPort, _settings.SyncPort, _settings.InternetSyncEnabled); }
+        catch (SocketException) { /* another window holds the port — leave this vault un-shared, as elsewhere */ }
+        UpdateSyncStatusText();
     }
 
     private async void OnEditProperties(object? sender, RoutedEventArgs e) => await EditActiveProperties();
