@@ -37,6 +37,81 @@ public class SyncViewModelInternetTests : IDisposable
             => Task.FromResult<PortMapping?>(null);
     }
 
+    // Records how the head drove the firewall opener without touching the real OS firewall (the production
+    // NetshFirewallOpener would shell out to an elevated netsh and prompt for UAC).
+    private sealed class RecordingFirewall : IFirewallOpener
+    {
+        public int EnsureCalls;
+        public int RemoveCalls;
+        public int LastPairingPort;
+        public int LastSyncPort;
+        public readonly TaskCompletionSource Ensured = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<bool> EnsureInboundAllowedAsync(int pairingPort, int syncPort, CancellationToken ct)
+        {
+            Interlocked.Increment(ref EnsureCalls);
+            LastPairingPort = pairingPort;
+            LastSyncPort = syncPort;
+            Ensured.TrySetResult();
+            return Task.FromResult(true);
+        }
+
+        public Task RemoveAsync(CancellationToken ct)
+        {
+            Interlocked.Increment(ref RemoveCalls);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task Enabling_internet_sync_opens_the_host_firewall_for_the_bound_ports()
+    {
+        var dir = NewVault();
+        var fw = new RecordingFirewall();
+        using var vm = new SyncViewModel(
+            WikiSyncHostFactory.ForVault(dir, new InMemorySecretStore()),
+            () => Now, endpoints: LoopbackEndpoints(), firewall: fw);
+        await vm.ShareVaultAsync("Ada", "ada@x");
+
+        var ep = vm.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: true);
+        await fw.Ensured.Task;   // the background reachability work invoked the opener
+
+        Assert.Equal(1, fw.EnsureCalls);
+        Assert.Equal(vm.PairingEndpoint!.Port, fw.LastPairingPort);   // scoped to the ports we actually bound
+        Assert.Equal(ep.Port, fw.LastSyncPort);
+    }
+
+    [Fact]
+    public async Task Sharing_lan_only_never_touches_the_firewall()
+    {
+        var dir = NewVault();
+        var fw = new RecordingFirewall();
+        using var vm = new SyncViewModel(
+            WikiSyncHostFactory.ForVault(dir, new InMemorySecretStore()),
+            () => Now, endpoints: LoopbackEndpoints(), firewall: fw);
+        await vm.ShareVaultAsync("Ada", "ada@x");
+
+        vm.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: false);
+
+        // internetEnabled:false skips the whole reachability block — no background task is even spawned, so this
+        // is a deterministic negative that needs no await.
+        Assert.Equal(0, fw.EnsureCalls);
+    }
+
+    [Fact]
+    public async Task Removing_internet_reachability_delegates_to_the_opener()
+    {
+        var dir = NewVault();
+        var fw = new RecordingFirewall();
+        using var vm = new SyncViewModel(
+            WikiSyncHostFactory.ForVault(dir, new InMemorySecretStore()),
+            () => Now, endpoints: LoopbackEndpoints(), firewall: fw);
+
+        await vm.RemoveInternetReachabilityAsync();
+
+        Assert.Equal(1, fw.RemoveCalls);
+    }
+
     [Fact]
     public async Task Remote_join_over_a_candidate_ladder_pairs_and_syncs_both_ways()
     {
@@ -48,7 +123,7 @@ public class SyncViewModelInternetTests : IDisposable
         var gathered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var owner = new SyncViewModel(
             WikiSyncHostFactory.ForVault(ownerDir, new InMemorySecretStore()),
-            () => Now, a => { a(); gathered.TrySetResult(); }, LoopbackEndpoints());
+            () => Now, a => { a(); gathered.TrySetResult(); }, LoopbackEndpoints(), new NoOpFirewallOpener());
         using var joiner = new SyncViewModel(
             WikiSyncHostFactory.ForVault(joinerDir, new InMemorySecretStore()),
             () => Now, endpoints: LoopbackEndpoints());

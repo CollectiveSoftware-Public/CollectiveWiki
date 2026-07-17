@@ -21,21 +21,24 @@ public partial class SyncViewModel : ObservableObject, IDisposable
     private readonly Func<DateTimeOffset> _clock;
     private readonly Action<Action> _dispatch;
     private readonly PublicEndpointProvider _endpoints;
+    private readonly IFirewallOpener _firewall;
     private readonly Dictionary<string, IReadOnlyList<IPEndPoint>> _peerSyncEndpoints = new();
     private readonly Dictionary<string, CollaboratorRow> _rows = new();
 
     private IReadOnlyList<SyncCandidate> _localCandidates = Array.Empty<SyncCandidate>();
+    private Task? _reachabilityWork;
     private SyncListener? _syncListener;
     private PairingListener? _pairingListener;
     private CancellationTokenSource? _autoPull;
 
     public SyncViewModel(VaultSyncService service, Func<DateTimeOffset>? clock = null, Action<Action>? dispatch = null,
-        PublicEndpointProvider? endpoints = null)
+        PublicEndpointProvider? endpoints = null, IFirewallOpener? firewall = null)
     {
         _service = service;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _dispatch = dispatch ?? (a => a());
         _endpoints = endpoints ?? new PublicEndpointProvider();
+        _firewall = firewall ?? FirewallOpeners.CreateDefault();
         RefreshCollaborators();
     }
 
@@ -88,14 +91,21 @@ public partial class SyncViewModel : ObservableObject, IDisposable
         // network wait — so gather them synchronously here, before AddCollaborator can be called.
         _localCandidates = _endpoints.GatherLocal(PairingEndpoint.Port, SyncEndpoint.Port, internetEnabled);
 
-        // Only the slow UPnP/NAT-PMP mapping runs off-thread, and only when internet sync is on; when it lands we
-        // swap in the full candidate set (LAN + IPv6 + the mapped public IPv4). Off = no background gather.
+        // Only the slow reachability work runs off-thread, and only when internet sync is on: open the host
+        // firewall (so the advertised global-IPv6 endpoint is actually reachable — enumerating an address does
+        // nothing if the OS drops the inbound SYN) and gather the UPnP/NAT-PMP public-IPv4 candidate. When the
+        // gather lands we swap in the full candidate set (LAN + IPv6 + mapped public IPv4). Off = neither runs.
+        // Ports are captured up front so a concurrent StopServing (which nulls the endpoints) can't NRE us.
         if (internetEnabled)
         {
-            _ = Task.Run(async () =>
+            var pairPort = PairingEndpoint.Port;
+            var syncP = SyncEndpoint.Port;
+            _reachabilityWork = Task.Run(async () =>
             {
-                var cands = await _endpoints.GatherAsync(PairingEndpoint!.Port, SyncEndpoint!.Port, internetEnabled, CancellationToken.None);
+                var admit = _firewall.EnsureInboundAllowedAsync(pairPort, syncP, CancellationToken.None);
+                var cands = await _endpoints.GatherAsync(pairPort, syncP, internetEnabled, CancellationToken.None);
                 _dispatch(() => _localCandidates = cands);
+                try { await admit; } catch { /* firewall admission is best-effort — never surface it as a sync crash */ }
             });
         }
 
@@ -125,6 +135,11 @@ public partial class SyncViewModel : ObservableObject, IDisposable
         SyncEndpoint = null; PairingEndpoint = null;
         IsSharing = false;
     }
+
+    /// <summary>Release the host firewall admission that <see cref="StartServing"/> opened for internet sync.
+    /// The head calls this only when the user turns internet sync off, so the port stops being admitted instead
+    /// of being left open. Best-effort (may raise a one-time elevation prompt); safe when nothing was opened.</summary>
+    public Task RemoveInternetReachabilityAsync() => _firewall.RemoveAsync(CancellationToken.None);
 
     /// <summary>Mint a role-tagged invite whose discovery hint carries our full advertisable candidate set
     /// (LAN always; global IPv6 + public IPv4 when internet sync is on). Falls back to a fresh LAN-only
