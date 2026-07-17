@@ -15,6 +15,11 @@ namespace Wiki.Sync.Transport;
 public sealed class PairingListener : IDisposable
 {
     private static readonly TimeSpan DefaultHandshakeTimeout = TimeSpan.FromSeconds(10);
+    // Pairing admits ANY device (roster-independent), so an unauthenticated internet peer can complete the cheap
+    // mutual-TLS handshake and then stall the exchange, holding its slot. The exchange is a single request/response
+    // round the joiner sends immediately, so this generous deadline never trips a legitimate joiner but bounds an
+    // idle attacker to one slot for at most this long (vs. indefinitely).
+    private static readonly TimeSpan DefaultServeTimeout = TimeSpan.FromSeconds(30);
 
     private readonly DeviceIdentity _self;
     private readonly Func<TlsPeerConnection, CancellationToken, Task> _onPeer;
@@ -23,11 +28,12 @@ public sealed class PairingListener : IDisposable
     private CancellationTokenSource? _cts;
 
     public PairingListener(DeviceIdentity self, Func<TlsPeerConnection, CancellationToken, Task> onPeer,
-        TimeSpan? handshakeTimeout = null, int maxConcurrentHandshakes = 64)
+        TimeSpan? handshakeTimeout = null, int maxConcurrentHandshakes = 64, TimeSpan? serveTimeout = null)
     {
         _self = self;
         _onPeer = onPeer;
-        _gate = new ConnectionGate(handshakeTimeout ?? DefaultHandshakeTimeout, maxConcurrentHandshakes);
+        _gate = new ConnectionGate(handshakeTimeout ?? DefaultHandshakeTimeout, maxConcurrentHandshakes,
+            serveTimeout ?? DefaultServeTimeout);
     }
 
     public IPEndPoint Start(IPEndPoint bind)
