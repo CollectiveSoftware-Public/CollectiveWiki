@@ -1760,12 +1760,15 @@ public partial class MainWindow : Window
         if (choice != UpdateChoice.UpdateNow) return;
 
         if (!await PromptSaveDirtyNoteTabsAsync()) return;                // save open work before the restart
-        StagedUpdate? staged;
-        try { staged = await Updates().DownloadAsync(info); }
-        catch (Exception ex) { await InfoAsync("Update", "Download failed: " + ex.Message); return; }
-        if (staged is null) { await InfoAsync("Update", "The download could not be verified and was discarded."); return; }
 
-        var outcome = Updates().Apply(staged, UpdateConfig.CurrentExePath());
+        // The download is a visible operation: a live progress bar the user can cancel, not a silent
+        // pause before the app suddenly restarts.
+        var result = await UpdateProgressDialog.RunAsync(this, Updates(), info);
+        if (result.Cancelled) return;                                    // user stopped it; stay on this version
+        if (result.Error is not null) { await InfoAsync("Update", "Download failed: " + result.Error); return; }
+        if (result.Staged is null) { await InfoAsync("Update", "The download could not be verified and was discarded."); return; }
+
+        var outcome = Updates().Apply(result.Staged, UpdateConfig.CurrentExePath());
         // Apply restarts the process on success; reaching here means it did not.
         await InfoAsync("Update", outcome == ApplyOutcome.NotWritable
             ? "This install location is not writable. Download the new version from the releases page."

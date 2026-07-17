@@ -10,8 +10,15 @@ public class UpdateCoordinatorTests
     sealed class SpyService(UpdateCheck result) : IUpdateService
     {
         public int Checks { get; private set; }
+        public bool Downloaded { get; private set; }
+        public IProgress<double>? LastProgress { get; private set; }
+        public CancellationToken LastToken { get; private set; }
         public Task<UpdateCheck> CheckAsync(CancellationToken ct) { Checks++; return Task.FromResult(result); }
-        public Task<StagedUpdate?> DownloadAsync(UpdateInfo i, IProgress<double>? p, CancellationToken ct) => Task.FromResult<StagedUpdate?>(null);
+        public Task<StagedUpdate?> DownloadAsync(UpdateInfo i, IProgress<double>? p, CancellationToken ct)
+        {
+            Downloaded = true; LastProgress = p; LastToken = ct;
+            return Task.FromResult<StagedUpdate?>(null);
+        }
         public ApplyOutcome ApplyAndRestart(StagedUpdate s, string exe) => ApplyOutcome.Failed;
     }
     static readonly DateTime Now = new(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
@@ -46,6 +53,35 @@ public class UpdateCoordinatorTests
         Assert.Equal(1, svc.Checks);
         Assert.Equal(Now, s.LastUpdateCheckUtc);
         Assert.Equal(1, persists);
+    }
+
+    [Fact] public async Task DownloadAsync_forwards_progress_and_token_to_the_service()
+    {
+        // The progress UI passes a reporter (drives the bar) and a token (the Cancel button); both
+        // must reach the download path — a swallowed null would leave the dialog frozen at 0%.
+        var svc = new SpyService(new UpdateCheck.UpToDate());
+        var coord = Make(new AppSettings(), svc);
+        var progress = new Progress<double>();
+        using var cts = new CancellationTokenSource();
+        var info = new UpdateInfo("1.3.0", new ManifestArtifact("win-x64", "https://example.test/app", "abc", 100), "");
+
+        await coord.DownloadAsync(info, progress, cts.Token);
+
+        Assert.True(svc.Downloaded);
+        Assert.Same(progress, svc.LastProgress);
+        Assert.Equal(cts.Token, svc.LastToken);
+    }
+
+    [Fact] public async Task DownloadAsync_defaults_to_no_progress_and_no_token()
+    {
+        var svc = new SpyService(new UpdateCheck.UpToDate());
+        var info = new UpdateInfo("1.3.0", new ManifestArtifact("win-x64", "https://example.test/app", "abc", 100), "");
+
+        await Make(new AppSettings(), svc).DownloadAsync(info);   // silent path stays one-argument
+
+        Assert.True(svc.Downloaded);
+        Assert.Null(svc.LastProgress);
+        Assert.Equal(CancellationToken.None, svc.LastToken);
     }
 
     [Fact] public void SkipVersion_and_RecordConsent_persist()
