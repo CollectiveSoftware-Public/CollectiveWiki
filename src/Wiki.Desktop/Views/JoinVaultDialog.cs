@@ -132,14 +132,7 @@ public sealed class JoinVaultDialog : DialogWindow
             _folder.Text!.Trim(), _invite.Text!.Trim(), _name.Text!.Trim(), _email.Text!.Trim(),
             string.IsNullOrWhiteSpace(_host.Text) ? null : _host.Text!.Trim());
 
-        PairingOutcome outcome;
-        try { outcome = await JoinAction(form); }
-        catch
-        {
-            _status.Text = "Could not reach the owner — check the address and try again.";
-            UpdateJoinEnabled();
-            return;
-        }
+        PairingOutcome outcome = await JoinAction(form);
 
         if (outcome == PairingOutcome.Accepted) { _joined = true; Close(); }
         else { _status.Text = PairingOutcomeMessages.For(outcome); UpdateJoinEnabled(); }
