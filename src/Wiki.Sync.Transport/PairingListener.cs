@@ -55,7 +55,13 @@ public sealed class PairingListener : IDisposable
             try { client = await listener.AcceptTcpClientAsync(ct); }
             catch (OperationCanceledException) { return; }
             catch (ObjectDisposedException) { return; }
-            catch (SocketException) { return; }
+            catch (SocketException)
+            {
+                // A transient accept-level socket error (e.g. a connection reset during accept) must NOT kill the
+                // listener — back off briefly and keep accepting. Genuine shutdown surfaces as cancellation below.
+                try { await Task.Delay(200, ct); } catch (OperationCanceledException) { return; }
+                continue;
+            }
             // Admit ANY device (roster-independent); the invite token gates pairing at the app layer.
             _ = _gate.HandleAsync(client, _self, _ => true, _onPeer, ct);
         }
