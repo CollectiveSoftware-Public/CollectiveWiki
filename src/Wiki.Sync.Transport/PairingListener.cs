@@ -33,6 +33,8 @@ public sealed class PairingListener : IDisposable
     public IPEndPoint Start(IPEndPoint bind)
     {
         _listener = new TcpListener(bind);
+        if (bind.AddressFamily == AddressFamily.InterNetworkV6)
+            _listener.Server.DualMode = true;   // accept IPv4-mapped clients too
         _listener.Start();
         _cts = new CancellationTokenSource();
         _ = AcceptLoopAsync(_listener, _cts.Token);
