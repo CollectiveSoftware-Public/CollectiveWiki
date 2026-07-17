@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using Wiki.Sync;
@@ -31,6 +32,33 @@ public static class PeerConnector
         }
         throw new InvalidOperationException(
             $"no route to peer {targetDeviceId}: no LAN endpoint and no relay configured");
+    }
+
+    /// <summary>Dial a peer by trying an ordered list of candidate endpoints (LAN first, then IPv6, then
+    /// public IPv4), each bounded by <paramref name="perCandidateTimeout"/> so a dead candidate can't stall
+    /// the ladder. The relay tier stays available but is unused in v1 (callers pass null). Throws
+    /// <see cref="InvalidOperationException"/> when there is nothing to try, otherwise the last dial failure.</summary>
+    public static async Task<TlsPeerConnection> ConnectAsync(
+        DeviceIdentity self, string targetDeviceId, IReadOnlyList<IPEndPoint> candidates,
+        RelayEndpoint? relay = null, TimeSpan? perCandidateTimeout = null, CancellationToken ct = default)
+    {
+        var timeout = perCandidateTimeout ?? TimeSpan.FromSeconds(3);
+        Exception? last = null;
+        foreach (var ep in candidates)
+        {
+            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            attempt.CancelAfter(timeout);
+            try { return await DialLanAsync(ep, self, targetDeviceId, attempt.Token); }
+            catch (Exception ex) { last = ex; }   // try the next candidate
+        }
+        if (relay is not null)   // dormant in v1 — no caller passes a relay
+        {
+            var stream = await RelayClient.ConnectAsync(relay.Host, relay.Port, targetDeviceId, ct);
+            try { return await TlsPeerConnection.AuthenticateClientAsync(stream, self, targetDeviceId, ct); }
+            catch { await stream.DisposeAsync(); throw; }
+        }
+        if (last is not null) throw last;
+        throw new InvalidOperationException($"no route to peer {targetDeviceId}: no candidate endpoints");
     }
 
     private static async Task<TlsPeerConnection> DialLanAsync(
