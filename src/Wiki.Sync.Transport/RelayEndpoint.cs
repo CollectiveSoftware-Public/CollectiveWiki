@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.ExceptionServices;
 using Wiki.Sync;
 
 namespace Wiki.Sync.Transport;
@@ -57,7 +58,7 @@ public static class PeerConnector
             try { return await TlsPeerConnection.AuthenticateClientAsync(stream, self, targetDeviceId, ct); }
             catch { await stream.DisposeAsync(); throw; }
         }
-        if (last is not null) throw last;
+        if (last is not null) ExceptionDispatchInfo.Capture(last).Throw();   // rethrow the real dial failure, stack intact
         throw new InvalidOperationException($"no route to peer {targetDeviceId}: no candidate endpoints");
     }
 

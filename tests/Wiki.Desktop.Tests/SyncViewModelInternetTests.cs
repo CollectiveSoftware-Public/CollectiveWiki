@@ -181,4 +181,24 @@ public class SyncViewModelInternetTests : IDisposable
         var outcome = await joiner.JoinAsync(invite, "Bob", "bob@x");
         Assert.Equal(PairingOutcome.NoRoute, outcome);
     }
+
+    [Fact]
+    public async Task Join_with_only_an_unreachable_global_candidate_returns_OwnerUnreachable()
+    {
+        var joinerDir = NewVault();
+        using var joiner = new SyncViewModel(
+            WikiSyncHostFactory.ForVault(joinerDir, new InMemorySecretStore()), () => Now, endpoints: LoopbackEndpoints());
+        joiner.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: false);
+
+        // The owner advertised a GLOBAL candidate (TEST-NET-3, RFC 5737 — globally scoped but never routed), so a
+        // failed dial means "reached-for but unreachable": OwnerUnreachable ("they may be offline / your networks
+        // can't connect"), NOT NoRoute (which is for a LAN-only owner who advertised nothing global).
+        var hint = SyncDiscoveryHint.FormatMany(new[] { new SyncCandidate("203.0.113.1", 8768, 8767) });
+        var invite = InviteCodec.Encode(new InvitePayload(
+            "OWNERDEVICEIDNOTONNET", Guid.NewGuid(), PeerRole.ReadWrite,
+            new byte[] { 1, 2, 3, 4 }, Now.AddHours(1), hint));
+
+        var outcome = await joiner.JoinAsync(invite, "Bob", "bob@x");
+        Assert.Equal(PairingOutcome.OwnerUnreachable, outcome);
+    }
 }

@@ -22,6 +22,9 @@ public static class AddressScope
         }
         if (addr.AddressFamily == AddressFamily.InterNetworkV6)
         {
+            // A dual-stack accept reports an IPv4 peer as ::ffff:a.b.c.d — classify it by the embedded IPv4,
+            // else a mapped private address (::ffff:192.168.x.x) would slip through the v6 checks as "global".
+            if (addr.IsIPv4MappedToIPv6) return IsGlobal(addr.MapToIPv4());
             if (addr.IsIPv6LinkLocal || addr.IsIPv6SiteLocal) return false;
             var b = addr.GetAddressBytes();
             if ((b[0] & 0xFE) == 0xFC) return false;                  // fc00::/7 unique-local

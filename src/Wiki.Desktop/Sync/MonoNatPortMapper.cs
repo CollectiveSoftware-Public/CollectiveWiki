@@ -23,9 +23,12 @@ public sealed class MonoNatPortMapper : IPortMapper
             if (winner != found.Task) return null;
 
             var device = await found.Task;
-            await device.CreatePortMapAsync(new Mapping(Protocol.Tcp, internalPort, internalPort));
+            var granted = await device.CreatePortMapAsync(new Mapping(Protocol.Tcp, internalPort, internalPort));
             var ext = await device.GetExternalIPAsync();
-            return new PortMapping(ext.ToString(), internalPort);
+            // The IGD may open a different external port than we asked for (ours already taken); advertise the
+            // one it actually granted, not the one we requested — otherwise the invite points at a dead port.
+            var externalPort = granted?.PublicPort > 0 ? granted.PublicPort : internalPort;
+            return new PortMapping(ext.ToString(), externalPort);
         }
         catch { return null; }   // any UPnP failure → this rung simply yields nothing
         finally

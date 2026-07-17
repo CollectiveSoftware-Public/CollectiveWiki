@@ -18,6 +18,8 @@ public class AddressScopeTests
     [InlineData("::1", false)]            // IPv6 loopback
     [InlineData("fe80::1", false)]        // IPv6 link-local
     [InlineData("fc00::1", false)]        // IPv6 ULA
+    [InlineData("::ffff:192.168.1.5", false)]  // IPv4-mapped IPv6 of a private address (dual-stack accept)
+    [InlineData("::ffff:8.8.8.8", true)]       // IPv4-mapped IPv6 of a public address
     public void IsGlobal_classifies(string ip, bool expected)
         => Assert.Equal(expected, AddressScope.IsGlobal(IPAddress.Parse(ip)));
 }
