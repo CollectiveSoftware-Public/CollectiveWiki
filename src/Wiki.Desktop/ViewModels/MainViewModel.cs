@@ -17,6 +17,18 @@ public partial class MainViewModel : ObservableObject
     private readonly NavigationHistory _history = new();
     private bool _historyNavigating;
 
+    /// <summary>Whether back/forward navigation is currently possible — mirrors this window's history so the
+    /// toolbar buttons and Go-menu items enable/disable in step. Refreshed by <see cref="RaiseNavChanged"/>
+    /// after every history change (a visit, a back/forward jump, or a vault switch that clears history).</summary>
+    public bool CanGoBack => _history.CanGoBack;
+    public bool CanGoForward => _history.CanGoForward;
+
+    private void RaiseNavChanged()
+    {
+        OnPropertyChanged(nameof(CanGoBack));
+        OnPropertyChanged(nameof(CanGoForward));
+    }
+
     [ObservableProperty] private string _vaultName = "No vault open";
     [ObservableProperty] private string? _currentNote;
     [ObservableProperty] private bool _backlinksVisible;
@@ -109,6 +121,7 @@ public partial class MainViewModel : ObservableObject
         ActiveTabChanged?.Invoke(active);
         if (active?.Kind == TabKind.Note) RefreshBacklinks();
         else { Backlinks.Clear(); BacklinksHeader = "Backlinks"; }
+        RaiseNavChanged();   // a visit (or a jump landing here) may have changed what's reachable
     }
 
     /// <summary>Opens a vault. The heavy index rebuild runs on a background thread (a large vault takes
@@ -129,6 +142,7 @@ public partial class MainViewModel : ObservableObject
         // calling here (see MainWindow.OpenVaultPathAsync).
         Panes.CloseAllPanes();
         _history.Clear();
+        RaiseNavChanged();   // fresh vault → no history yet
 
         BuildTree(result.Notes);
         RefreshTags();
@@ -353,6 +367,7 @@ public partial class MainViewModel : ObservableObject
         _historyNavigating = true;
         try { NavigateActiveTab(path); }
         finally { _historyNavigating = false; }
+        RaiseNavChanged();   // the cursor moved — refresh both directions (the navigate above was a no-record jump)
     }
 
     /// <summary>Opens the active note's local link-graph (its neighborhood, depth 2) in a graph tab. Falls back

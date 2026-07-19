@@ -65,6 +65,17 @@
       <ToggleButton DockPanel.Dock="Right" Margin="4,2" Padding="8,2"
                     IsChecked="{Binding BacklinksVisible, Mode=TwoWay}"
                     Content="Backlinks" ToolTip.Tip="Show or hide the backlinks panel"/>
+      <!-- Always-visible navigation, the browser-standard spot (left of the menus). Same handlers as the Go
+           menu / Alt+arrows / mouse X-buttons; grey out when there's nowhere to go. -->
+      <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="1"
+                  VerticalAlignment="Center" Margin="4,0,2,0">
+        <Button Content="←" Click="OnGoBack" IsEnabled="{Binding CanGoBack}"
+                Background="Transparent" BorderThickness="0" Padding="8,2" FontSize="14"
+                ToolTip.Tip="Back (Alt+Left)" AutomationProperties.Name="Back"/>
+        <Button Content="→" Click="OnGoForward" IsEnabled="{Binding CanGoForward}"
+                Background="Transparent" BorderThickness="0" Padding="8,2" FontSize="14"
+                ToolTip.Tip="Forward (Alt+Right)" AutomationProperties.Name="Forward"/>
+      </StackPanel>
       <Menu Background="Transparent">
         <MenuItem Header="_File">
           <MenuItem Header="Open Vault…" Click="OnOpenVault"/>
@@ -95,8 +106,8 @@
           <MenuItem Header="Exit" Click="OnExit"/>
         </MenuItem>
         <MenuItem Header="_Go">
-          <MenuItem Header="Back" InputGesture="Alt+Left" Click="OnGoBack"/>
-          <MenuItem Header="Forward" InputGesture="Alt+Right" Click="OnGoForward"/>
+          <MenuItem Header="Back" InputGesture="Alt+Left" Click="OnGoBack" IsEnabled="{Binding CanGoBack}"/>
+          <MenuItem Header="Forward" InputGesture="Alt+Right" Click="OnGoForward" IsEnabled="{Binding CanGoForward}"/>
           <Separator/>
           <MenuItem Header="Quick Switch…" InputGesture="Ctrl+O" Click="OnQuickSwitch"/>
           <MenuItem Header="Search in Vault…" InputGesture="Ctrl+Shift+F" Click="OnFocusSearch"/>
