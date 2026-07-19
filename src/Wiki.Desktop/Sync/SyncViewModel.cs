@@ -186,7 +186,9 @@ public partial class SyncViewModel : ObservableObject, IDisposable
     /// IPv4, in advertised order; a <paramref name="hostOverride"/> is tried first), pair over the wire, then do
     /// the initial sync. No relay tier in v1. Maps a dial failure to <see cref="PairingOutcome.NoRoute"/> when
     /// the owner advertised nothing globally reachable (LAN-only), or <see cref="PairingOutcome.OwnerUnreachable"/>
-    /// when it advertised a global candidate but none connected. Returns the pairing outcome.</summary>
+    /// when it advertised a global candidate but none connected; a failure AFTER the connection was established
+    /// is <see cref="PairingOutcome.ExchangeFailed"/> — the owner WAS reached, so it must never masquerade as
+    /// unreachability. Returns the pairing outcome.</summary>
     public async Task<PairingOutcome> JoinAsync(string invite, string name, string email, string? hostOverride = null)
     {
         if (!InviteCodec.TryParse(invite, out var payload) || payload is null) return PairingOutcome.WrongVault;
@@ -212,14 +214,16 @@ public partial class SyncViewModel : ObservableObject, IDisposable
         }
         if (pairing.Count == 0) return PairingOutcome.NoRoute;
 
-        PairingOutcome outcome;
-        try
-        {
-            using var conn = await PeerConnector.ConnectAsync(_service.Identity, payload.OwnerDeviceId, pairing);
-            outcome = await _service.RequestPairingAsync(conn, invite, name, email);
-        }
+        // The unreachability catches cover ONLY the dial — once a connection exists, "reached but broke" must
+        // not be reported as "couldn't reach" (the honesty these outcomes exist for).
+        TlsPeerConnection conn;
+        try { conn = await PeerConnector.ConnectAsync(_service.Identity, payload.OwnerDeviceId, pairing); }
         catch (InvalidOperationException) { return PairingOutcome.NoRoute; }   // nothing dialable to try
         catch { return anyGlobal ? PairingOutcome.OwnerUnreachable : PairingOutcome.NoRoute; }
+
+        PairingOutcome outcome;
+        try { using (conn) outcome = await _service.RequestPairingAsync(conn, invite, name, email); }
+        catch { return PairingOutcome.ExchangeFailed; }   // established, then the exchange died mid-flight
 
         if (outcome == PairingOutcome.Accepted)
         {

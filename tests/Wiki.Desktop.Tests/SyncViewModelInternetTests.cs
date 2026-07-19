@@ -2,6 +2,7 @@
 using System.Net;
 using Wiki.Desktop.Sync;
 using Wiki.Sync;
+using Wiki.Sync.Transport;
 using Xunit;
 
 namespace Wiki.Desktop.Tests;
@@ -200,5 +201,29 @@ public class SyncViewModelInternetTests : IDisposable
 
         var outcome = await joiner.JoinAsync(invite, "Bob", "bob@x");
         Assert.Equal(PairingOutcome.OwnerUnreachable, outcome);
+    }
+
+    [Fact]
+    public async Task Join_that_connects_but_fails_the_exchange_returns_ExchangeFailed_not_unreachable()
+    {
+        var joinerDir = NewVault();
+        using var joiner = new SyncViewModel(
+            WikiSyncHostFactory.ForVault(joinerDir, new InMemorySecretStore()), () => Now, endpoints: LoopbackEndpoints());
+
+        // A real owner listener whose pairing handler reads one byte of the JoinRequest and then closes without
+        // ever answering: the mutual-TLS handshake succeeds (the owner WAS reached), then the exchange dies.
+        // That must report ExchangeFailed — never OwnerUnreachable/NoRoute, which are verdicts about the dial.
+        using var owner = DeviceIdentity.Create();
+        using var listener = new PairingListener(owner,
+            async (conn, ct) => { var b = new byte[1]; await conn.Stream.ReadExactlyAsync(b, ct); });
+        var ep = listener.Start(new IPEndPoint(IPAddress.Loopback, 0));
+
+        var hint = SyncDiscoveryHint.FormatMany(new[] { new SyncCandidate("127.0.0.1", ep.Port, ep.Port) });
+        var invite = InviteCodec.Encode(new InvitePayload(
+            owner.DeviceId, Guid.NewGuid(), PeerRole.ReadWrite,
+            new byte[] { 1, 2, 3, 4 }, Now.AddHours(1), hint));
+
+        var outcome = await joiner.JoinAsync(invite, "Bob", "bob@x");
+        Assert.Equal(PairingOutcome.ExchangeFailed, outcome);
     }
 }

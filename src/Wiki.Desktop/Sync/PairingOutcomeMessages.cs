@@ -18,6 +18,7 @@ public static class PairingOutcomeMessages
         PairingOutcome.IdentityMismatch => "This invite was issued for a different device — ask the owner to invite this one.",
         PairingOutcome.NoRoute => "This invite only works on the owner's local network. Ask them to turn on internet sync in Settings and send you a fresh invite.",
         PairingOutcome.OwnerUnreachable => "Couldn't reach the vault owner — they may be offline, or your two networks can't connect directly (for example, both behind carrier NAT). Make sure they're online with internet sync on, then try again.",
+        PairingOutcome.ExchangeFailed => "Connected to the owner, but the pairing didn't complete — they may have closed the app mid-join. Try again in a moment.",
         _ => "The join could not be completed — ask the owner for a fresh invite.",
     };
 }
