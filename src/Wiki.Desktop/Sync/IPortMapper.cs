@@ -13,4 +13,9 @@ public sealed record PortMapping(string ExternalIp, int ExternalPort);
 public interface IPortMapper
 {
     Task<PortMapping?> TryMapAsync(int internalPort, TimeSpan timeout, CancellationToken ct);
+
+    /// <summary>Remove a mapping previously granted by <see cref="TryMapAsync"/>, so the router stops forwarding
+    /// WAN traffic to this device when the user opts back out of internet sync. Best-effort like the map: any
+    /// failure (router gone, UPnP since disabled, mapping already expired) is swallowed — never throws.</summary>
+    Task TryUnmapAsync(int internalPort, int externalPort, TimeSpan timeout, CancellationToken ct);
 }

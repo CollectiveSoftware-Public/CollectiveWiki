@@ -1662,17 +1662,41 @@ public partial class MainWindow : Window
 
     // Re-bind the sync listeners so an internet-sync toggle takes effect immediately, without an app restart.
     // Turning it ON re-binds dual-stack and opens the firewall + UPnP mapping (via StartServing's reachability
-    // work); turning it OFF releases the firewall admission and re-binds IPv4-only so LAN sync keeps working
-    // while the internet-facing port is closed. The peer set survives the stop/start (StopServing keeps it), so
-    // collaborators are not dropped. If we're not currently sharing there's nothing bound to re-do — the new
-    // value applies the next time StartServing runs.
+    // work); turning it OFF undoes that posture — drains any in-flight reachability work, releases the router
+    // mapping and the firewall admission — and re-binds IPv4-only so LAN sync keeps working while the
+    // internet-facing surface is closed. The undo runs even when not currently sharing: a firewall rule or
+    // router mapping can outlive the serve (or this session) and turning the setting off must close it. The
+    // peer set survives the stop/start (StopServing keeps it), so collaborators are not dropped.
     private async Task ApplyInternetSyncChangeAsync()
     {
-        if (_sync is not { IsSharing: true } sync) return;
-        sync.StopServing();
-        if (!_settings.InternetSyncEnabled) await sync.RemoveInternetReachabilityAsync();
-        try { sync.StartServing(_settings.PairingPort, _settings.SyncPort, _settings.InternetSyncEnabled); }
-        catch (SocketException) { /* another window holds the port — leave this vault un-shared, as elsewhere */ }
+        var removed = true;
+        if (_sync is { } sync)
+        {
+            var wasSharing = sync.IsSharing;
+            if (wasSharing) sync.StopServing();
+            if (!_settings.InternetSyncEnabled) removed = await sync.RemoveInternetReachabilityAsync();
+            if (wasSharing)
+            {
+                try { sync.StartServing(_settings.PairingPort, _settings.SyncPort, _settings.InternetSyncEnabled); }
+                catch (SocketException) { /* another window holds the port — leave this vault un-shared, as elsewhere */ }
+            }
+        }
+        else if (!_settings.InternetSyncEnabled)
+        {
+            // No sync host stood up this session, but a firewall rule / router mapping may persist from an
+            // earlier one — turning the setting off must still close them. The blind unmap assumes the
+            // default same-number external ports an earlier session's mapping used (best-effort either way;
+            // building a full sync host — device identity, sidecars — just to undo this would be worse).
+            var mapper = new MonoNatPortMapper();
+            await mapper.TryUnmapAsync(_settings.PairingPort, _settings.PairingPort, TimeSpan.FromSeconds(5), CancellationToken.None);
+            await mapper.TryUnmapAsync(_settings.SyncPort, _settings.SyncPort, TimeSpan.FromSeconds(5), CancellationToken.None);
+            removed = await FirewallOpeners.CreateDefault().RemoveAsync(CancellationToken.None);
+        }
+        if (!removed)
+            await MessageAsync("Internet sync",
+                "The firewall rule could not be removed (was the elevation prompt declined?), so this device may " +
+                "still be reachable from the internet. Turn internet sync off again to retry, or remove the rule " +
+                $"\"{NetshFirewallOpener.RuleName}\" in Windows Defender Firewall.");
         UpdateSyncStatusText();
     }
 

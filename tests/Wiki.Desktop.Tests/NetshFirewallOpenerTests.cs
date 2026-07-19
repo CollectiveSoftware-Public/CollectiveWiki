@@ -43,6 +43,6 @@ public class NetshFirewallOpenerTests
     {
         var op = new NoOpFirewallOpener();
         Assert.True(await op.EnsureInboundAllowedAsync(1, 2, CancellationToken.None));
-        await op.RemoveAsync(CancellationToken.None);   // must not throw
+        Assert.True(await op.RemoveAsync(CancellationToken.None));   // "nothing to remove" reads as removed
     }
 }

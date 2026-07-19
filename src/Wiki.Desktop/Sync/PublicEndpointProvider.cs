@@ -12,13 +12,16 @@ using Wiki.Sync.Transport;
 namespace Wiki.Desktop.Sync;
 
 /// <summary>Gathers this device's dialable candidates for an invite: LAN IPv4 always; and, when internet sync
-/// is enabled, any global IPv6 address plus a UPnP/NAT-PMP-mapped public IPv4. The two ctor delegates make
-/// the assembly logic testable without touching the real network.</summary>
+/// is enabled, any global IPv6 address plus a UPnP/NAT-PMP-mapped public IPv4. Remembers the router mappings it
+/// was granted so <see cref="ReleaseAsync"/> can undo them when the user opts back out. The two ctor delegates
+/// make the assembly logic testable without touching the real network.</summary>
 public sealed class PublicEndpointProvider
 {
     private readonly IPortMapper _mapper;
     private readonly Func<IEnumerable<IPAddress>> _globalV6;
     private readonly Func<string> _lanIPv4;
+    private readonly object _grantedLock = new();
+    private readonly List<(int InternalPort, int ExternalPort)> _granted = new();
 
     public PublicEndpointProvider() : this(new MonoNatPortMapper(), DefaultGlobalV6, LanEndpoints.LocalIPv4) { }
 
@@ -52,10 +55,33 @@ public sealed class PublicEndpointProvider
         var timeout = TimeSpan.FromSeconds(5);
         var pair = await _mapper.TryMapAsync(pairingPort, timeout, ct);
         var sync = await _mapper.TryMapAsync(syncPort, timeout, ct);
+        RememberGranted(pairingPort, pair);
+        RememberGranted(syncPort, sync);
         if (pair is not null && sync is not null && pair.ExternalIp == sync.ExternalIp)
             list.Add(new SyncCandidate(pair.ExternalIp, pair.ExternalPort, sync.ExternalPort));
 
         return list;
+    }
+
+    // Every granted mapping is remembered — even one that produced no advertised candidate (e.g. only one of
+    // the two ports mapped, or the external IPs disagreed): the router-side forward exists regardless and must
+    // be released on opt-out.
+    private void RememberGranted(int internalPort, PortMapping? granted)
+    {
+        if (granted is null) return;
+        lock (_grantedLock) _granted.Add((internalPort, granted.ExternalPort));
+    }
+
+    /// <summary>Delete every router mapping this provider was granted, so opting out of internet sync leaves the
+    /// router forwarding nothing to this device. Session-scoped: it releases what THIS process mapped (a mapping
+    /// left by an earlier run is re-used/re-created by the next opt-in rather than tracked here). Consumes the
+    /// grant list, so a second call is a no-op. Best-effort; never throws.</summary>
+    public async Task ReleaseAsync(CancellationToken ct)
+    {
+        (int InternalPort, int ExternalPort)[] granted;
+        lock (_grantedLock) { granted = _granted.ToArray(); _granted.Clear(); }
+        foreach (var (internalPort, externalPort) in granted)
+            await _mapper.TryUnmapAsync(internalPort, externalPort, TimeSpan.FromSeconds(5), ct);
     }
 
     private static IEnumerable<IPAddress> DefaultGlobalV6()

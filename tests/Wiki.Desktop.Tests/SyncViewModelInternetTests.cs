@@ -36,6 +36,31 @@ public class SyncViewModelInternetTests : IDisposable
     {
         public Task<PortMapping?> TryMapAsync(int internalPort, TimeSpan timeout, CancellationToken ct)
             => Task.FromResult<PortMapping?>(null);
+        public Task TryUnmapAsync(int internalPort, int externalPort, TimeSpan timeout, CancellationToken ct)
+            => Task.CompletedTask;
+    }
+
+    // Grants every internal port a same-number mapping on a public IP and counts the unmaps back.
+    private sealed class GrantingMapper : IPortMapper
+    {
+        public int UnmapCalls;
+        public Task<PortMapping?> TryMapAsync(int internalPort, TimeSpan timeout, CancellationToken ct)
+            => Task.FromResult<PortMapping?>(new PortMapping("203.0.113.9", internalPort));
+        public Task TryUnmapAsync(int internalPort, int externalPort, TimeSpan timeout, CancellationToken ct)
+        {
+            Interlocked.Increment(ref UnmapCalls);
+            return Task.CompletedTask;
+        }
+    }
+
+    // A mapper whose map result is released by the test — holds the background gather open so the test controls
+    // exactly when the (by then stale) candidate set tries to land.
+    private sealed class GatedMapper : IPortMapper
+    {
+        public readonly TaskCompletionSource<PortMapping?> Result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<PortMapping?> TryMapAsync(int internalPort, TimeSpan timeout, CancellationToken ct) => Result.Task;
+        public Task TryUnmapAsync(int internalPort, int externalPort, TimeSpan timeout, CancellationToken ct)
+            => Task.CompletedTask;
     }
 
     // Records how the head drove the firewall opener without touching the real OS firewall (the production
@@ -57,10 +82,31 @@ public class SyncViewModelInternetTests : IDisposable
             return Task.FromResult(true);
         }
 
-        public Task RemoveAsync(CancellationToken ct)
+        public Task<bool> RemoveAsync(CancellationToken ct)
         {
             Interlocked.Increment(ref RemoveCalls);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
+        }
+    }
+
+    // A firewall whose ADD blocks until the test releases it — models the elevated netsh (or its UAC prompt)
+    // still being in flight when the user toggles internet sync back off.
+    private sealed class SlowEnsureFirewall : IFirewallOpener
+    {
+        public readonly TaskCompletionSource ReleaseAdd = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly List<string> Calls = new();
+
+        public async Task<bool> EnsureInboundAllowedAsync(int pairingPort, int syncPort, CancellationToken ct)
+        {
+            await ReleaseAdd.Task;
+            lock (Calls) Calls.Add("add");
+            return true;
+        }
+
+        public Task<bool> RemoveAsync(CancellationToken ct)
+        {
+            lock (Calls) Calls.Add("remove");
+            return Task.FromResult(true);
         }
     }
 
@@ -108,9 +154,81 @@ public class SyncViewModelInternetTests : IDisposable
             WikiSyncHostFactory.ForVault(dir, new InMemorySecretStore()),
             () => Now, endpoints: LoopbackEndpoints(), firewall: fw);
 
-        await vm.RemoveInternetReachabilityAsync();
+        Assert.True(await vm.RemoveInternetReachabilityAsync());
 
         Assert.Equal(1, fw.RemoveCalls);
+    }
+
+    [Fact]
+    public async Task Removing_internet_reachability_releases_the_router_mappings()
+    {
+        var dir = NewVault();
+        var mapper = new GrantingMapper();
+        var fw = new RecordingFirewall();
+        using var vm = new SyncViewModel(
+            WikiSyncHostFactory.ForVault(dir, new InMemorySecretStore()), () => Now,
+            endpoints: new PublicEndpointProvider(mapper, () => Array.Empty<IPAddress>(), () => IPAddress.Loopback.ToString()),
+            firewall: fw);
+        await vm.ShareVaultAsync("Ada", "ada@x");
+        vm.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: true);
+
+        // The remove first DRAINS the background gather, so both granted mappings are known — and released.
+        Assert.True(await vm.RemoveInternetReachabilityAsync());
+
+        Assert.Equal(2, mapper.UnmapCalls);   // pairing + sync mappings deleted at the router
+        Assert.Equal(1, fw.RemoveCalls);
+    }
+
+    [Fact]
+    public async Task Toggling_off_waits_for_an_inflight_firewall_add_before_removing()
+    {
+        var dir = NewVault();
+        var fw = new SlowEnsureFirewall();
+        using var vm = new SyncViewModel(
+            WikiSyncHostFactory.ForVault(dir, new InMemorySecretStore()),
+            () => Now, endpoints: LoopbackEndpoints(), firewall: fw);
+        await vm.ShareVaultAsync("Ada", "ada@x");
+        vm.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: true);
+
+        // Mid-session toggle-off while the elevated add is still in flight: the remove must NOT overtake it —
+        // an add landing after the remove would re-open the admission the user just closed.
+        vm.StopServing();
+        var remove = vm.RemoveInternetReachabilityAsync();
+        Assert.False(remove.IsCompleted);   // blocked draining the in-flight add
+        fw.ReleaseAdd.TrySetResult();
+        Assert.True(await remove);
+
+        lock (fw.Calls) Assert.Equal(new[] { "add", "remove" }, fw.Calls);
+    }
+
+    [Fact]
+    public async Task A_stale_gather_from_before_the_toggle_cannot_reintroduce_global_candidates()
+    {
+        var dir = NewVault();
+        var mapper = new GatedMapper();
+        var fw = new RecordingFirewall();
+        var staleDispatched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var vm = new SyncViewModel(
+            WikiSyncHostFactory.ForVault(dir, new InMemorySecretStore()), () => Now,
+            a => { a(); staleDispatched.TrySetResult(); },
+            new PublicEndpointProvider(mapper, () => new[] { IPAddress.Parse("2001:db8::1") }, () => IPAddress.Loopback.ToString()),
+            fw);
+        await vm.ShareVaultAsync("Ada", "ada@x");
+
+        vm.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: true);   // gather blocks on the mapper
+        vm.StopServing();                                                       // user toggles internet sync off…
+        vm.StartServing(pairingPort: 0, syncPort: 0, internetEnabled: false);   // …and LAN-only serving resumes
+
+        // NOW the pre-toggle gather completes: its candidate set (LAN + global IPv6 + mapped IPv4) is stale —
+        // the current bind is IPv4-LAN-only, so swapping it in would advertise endpoints nothing listens on.
+        mapper.Result.TrySetResult(new PortMapping("203.0.113.9", 40000));
+        await staleDispatched.Task;   // the stale swap has been dispatched (and must have been suppressed)
+
+        var invite = vm.AddCollaborator(PeerRole.ReadWrite, TimeSpan.FromHours(1));
+        Assert.True(InviteCodec.TryParse(invite, out var payload));
+        Assert.True(SyncDiscoveryHint.TryParseMany(payload!.DiscoveryHint, out var cands));
+        var only = Assert.Single(cands);
+        Assert.Equal(IPAddress.Loopback.ToString(), only.Host);   // LAN only — no stale 2001:db8::1 / 203.0.113.9
     }
 
     [Fact]

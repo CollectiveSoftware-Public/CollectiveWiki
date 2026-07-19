@@ -22,12 +22,19 @@ public sealed class NetshFirewallOpener : IFirewallOpener
     public async Task<bool> EnsureInboundAllowedAsync(int pairingPort, int syncPort, CancellationToken ct)
     {
         var exe = Environment.ProcessPath;
-        if (string.IsNullOrEmpty(exe)) return false;   // can't scope the rule to our app → never open anything broader
-        if (RuleExists()) return true;                 // already admitted (read without elevation) → no prompt
+        if (string.IsNullOrEmpty(exe)) return false;    // can't scope the rule to our app → never open anything broader
+        if (TryFindRule() == true) return true;         // already admitted (read without elevation) → no prompt
         return await RunNetshElevatedAsync(BuildAddArguments(exe, pairingPort, syncPort), ct).ConfigureAwait(false);
     }
 
-    public Task RemoveAsync(CancellationToken ct) => RunNetshElevatedAsync(BuildDeleteArguments(), ct);
+    public async Task<bool> RemoveAsync(CancellationToken ct)
+    {
+        // The non-elevated probe keeps the common case prompt-free: when no rule exists there is nothing to
+        // remove and no reason to raise UAC. Only a definite "absent" skips the delete — an inconclusive probe
+        // still runs it, so a probe failure can't silently leave a real rule admitting traffic.
+        if (TryFindRule() == false) return true;
+        return await RunNetshElevatedAsync(BuildDeleteArguments(), ct).ConfigureAwait(false);
+    }
 
     /// <summary>The elevated <c>netsh</c> arguments that add the inbound-allow rule: scoped to our exe, TCP,
     /// the pairing + sync ports, on every profile so it works on a "Public" network too.</summary>
@@ -39,18 +46,19 @@ public sealed class NetshFirewallOpener : IFirewallOpener
     public static string BuildDeleteArguments()
         => $"advfirewall firewall delete rule name=\"{RuleName}\"";
 
-    /// <summary>Non-elevated existence check via the Windows Firewall COM API — reading rules needs no admin,
-    /// so this is what keeps ordinary launches prompt-free. Any failure returns false so the caller falls
-    /// through to the (possibly-prompting) add rather than wrongly assuming the rule is present.</summary>
-    private static bool RuleExists()
+    /// <summary>Non-elevated existence probe via the Windows Firewall COM API — reading rules needs no admin,
+    /// so this is what keeps ordinary launches (and rule-less removes) prompt-free. Three-state: true/false when
+    /// the probe answered, null when it could not (COM unavailable) — so each caller picks its own safe
+    /// fallback: the add treats unknown as "try adding", the delete treats unknown as "try deleting".</summary>
+    private static bool? TryFindRule()
     {
         if (!OperatingSystem.IsWindows()) return false;   // COM firewall API is Windows-only; also scopes CA1416
         try
         {
             var t = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
-            if (t is null) return false;
+            if (t is null) return null;
             dynamic? policy = Activator.CreateInstance(t);
-            if (policy is null) return false;
+            if (policy is null) return null;
             try
             {
                 foreach (dynamic rule in policy.Rules)
@@ -62,7 +70,7 @@ public sealed class NetshFirewallOpener : IFirewallOpener
             }
             finally { Marshal.FinalReleaseComObject(policy); }
         }
-        catch { return false; }
+        catch { return null; }
     }
 
     private static async Task<bool> RunNetshElevatedAsync(string arguments, CancellationToken ct)

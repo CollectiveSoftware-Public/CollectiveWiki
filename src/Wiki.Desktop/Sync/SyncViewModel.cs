@@ -27,6 +27,7 @@ public partial class SyncViewModel : ObservableObject, IDisposable
 
     private IReadOnlyList<SyncCandidate> _localCandidates = Array.Empty<SyncCandidate>();
     private Task? _reachabilityWork;
+    private CancellationTokenSource? _reachabilityCts;
     private SyncListener? _syncListener;
     private PairingListener? _pairingListener;
     private CancellationTokenSource? _autoPull;
@@ -100,11 +101,19 @@ public partial class SyncViewModel : ObservableObject, IDisposable
         {
             var pairPort = PairingEndpoint.Port;
             var syncP = SyncEndpoint.Port;
+            _reachabilityCts = new CancellationTokenSource();
+            var token = _reachabilityCts.Token;
             _reachabilityWork = Task.Run(async () =>
             {
-                var admit = _firewall.EnsureInboundAllowedAsync(pairPort, syncP, CancellationToken.None);
-                var cands = await _endpoints.GatherAsync(pairPort, syncP, internetEnabled, CancellationToken.None);
-                _dispatch(() => _localCandidates = cands);
+                var admit = _firewall.EnsureInboundAllowedAsync(pairPort, syncP, token);
+                try
+                {
+                    var cands = await _endpoints.GatherAsync(pairPort, syncP, internetEnabled, token);
+                    // A StopServing since we began (mid-session toggle) makes this gather stale — swapping it in
+                    // would advertise global candidates the current bind no longer listens on.
+                    _dispatch(() => { if (!token.IsCancellationRequested) _localCandidates = cands; });
+                }
+                catch { /* gather cancelled/failed — the synchronously gathered local candidates still stand */ }
                 try { await admit; } catch { /* firewall admission is best-effort — never surface it as a sync crash */ }
             });
         }
@@ -129,6 +138,9 @@ public partial class SyncViewModel : ObservableObject, IDisposable
 
     public void StopServing()
     {
+        // Cancel (don't dispose — the background task still holds the token) so an in-flight candidate gather
+        // can no longer swap its now-stale result into _localCandidates after we unbind.
+        _reachabilityCts?.Cancel(); _reachabilityCts = null;
         _autoPull?.Cancel(); _autoPull?.Dispose(); _autoPull = null;
         _syncListener?.Dispose(); _syncListener = null;
         _pairingListener?.Dispose(); _pairingListener = null;
@@ -136,10 +148,20 @@ public partial class SyncViewModel : ObservableObject, IDisposable
         IsSharing = false;
     }
 
-    /// <summary>Release the host firewall admission that <see cref="StartServing"/> opened for internet sync.
-    /// The head calls this only when the user turns internet sync off, so the port stops being admitted instead
-    /// of being left open. Best-effort (may raise a one-time elevation prompt); safe when nothing was opened.</summary>
-    public Task RemoveInternetReachabilityAsync() => _firewall.RemoveAsync(CancellationToken.None);
+    /// <summary>Undo the internet reachability that <see cref="StartServing"/> set up: drain any still-running
+    /// reachability work (so an in-flight firewall add cannot land AFTER the remove and re-open what we just
+    /// closed), release the router's UPnP/NAT-PMP mappings, then remove the host-firewall admission. The head
+    /// calls this when the user turns internet sync off. Returns false when a present firewall rule could not
+    /// be removed (elevation declined) — the host may then still admit inbound traffic and the caller must
+    /// surface that rather than let the opt-out fail silently. Safe when nothing was opened; never throws.</summary>
+    public async Task<bool> RemoveInternetReachabilityAsync()
+    {
+        _reachabilityCts?.Cancel();
+        if (_reachabilityWork is { } work) { try { await work.ConfigureAwait(false); } catch { /* drained */ } }
+        _reachabilityWork = null;
+        await _endpoints.ReleaseAsync(CancellationToken.None).ConfigureAwait(false);
+        return await _firewall.RemoveAsync(CancellationToken.None).ConfigureAwait(false);
+    }
 
     /// <summary>Mint a role-tagged invite whose discovery hint carries our full advertisable candidate set
     /// (LAN always; global IPv6 + public IPv4 when internet sync is on). Falls back to a fresh LAN-only

@@ -19,10 +19,12 @@ public interface IFirewallOpener
     /// added (elevation declined, no firewall tool). Never throws.</summary>
     Task<bool> EnsureInboundAllowedAsync(int pairingPort, int syncPort, CancellationToken ct);
 
-    /// <summary>Remove the rule added by <see cref="EnsureInboundAllowedAsync"/>. Idempotent; invoked only when
-    /// the user turns internet sync off, so the opened port is released rather than left admitting traffic.
-    /// Best-effort; never throws.</summary>
-    Task RemoveAsync(CancellationToken ct);
+    /// <summary>Remove the rule added by <see cref="EnsureInboundAllowedAsync"/>. Idempotent (true when no rule
+    /// exists to remove — and then without prompting); invoked when the user turns internet sync off, so the
+    /// opened port is released rather than left admitting traffic. Returns false when a present rule could NOT
+    /// be removed (elevation declined, netsh failure) — the host is then still admitting inbound traffic and
+    /// the caller must say so instead of letting the opt-out fail silently. Never throws.</summary>
+    Task<bool> RemoveAsync(CancellationToken ct);
 }
 
 /// <summary>The firewall opener for hosts with no supported firewall tool (non-Windows today). Reports success
@@ -30,7 +32,7 @@ public interface IFirewallOpener
 public sealed class NoOpFirewallOpener : IFirewallOpener
 {
     public Task<bool> EnsureInboundAllowedAsync(int pairingPort, int syncPort, CancellationToken ct) => Task.FromResult(true);
-    public Task RemoveAsync(CancellationToken ct) => Task.CompletedTask;
+    public Task<bool> RemoveAsync(CancellationToken ct) => Task.FromResult(true);
 }
 
 /// <summary>Selects the firewall opener for the running OS: netsh-backed on Windows, a no-op elsewhere.</summary>
