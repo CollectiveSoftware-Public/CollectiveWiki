@@ -32,8 +32,8 @@ public class SyncViewModelSyncGateTests : IDisposable
         using var joiner = Open(joinerDir);
 
         await owner.ShareVaultAsync("Ada", "ada@x");
-        owner.StartServing(IPAddress.Loopback);
-        var joinerSync = joiner.StartServing(IPAddress.Loopback);
+        owner.StartServing();
+        var joinerSync = joiner.StartServing();
 
         var invite = owner.AddCollaborator(PeerRole.ReadWrite, TimeSpan.FromHours(1));
         var outcome = await joiner.JoinAsync(invite, "Bob", "bob@x", hostOverride: "127.0.0.1");
@@ -44,8 +44,9 @@ public class SyncViewModelSyncGateTests : IDisposable
         Assert.Contains(joiner.Collaborators, c => c.DeviceId == owner.DeviceId);
 
         // The head learns a collaborator's return address from the observed connection; loopback uses ephemeral
-        // ports, so give the owner the joiner's actual sync endpoint explicitly.
-        owner.RememberPeer(joiner.DeviceId, joinerSync);
+        // ports (and the dual-stack bind reports its address as ::), so give the owner the joiner's actual sync
+        // endpoint explicitly as a dialable loopback address.
+        owner.RememberPeer(joiner.DeviceId, new IPEndPoint(IPAddress.Loopback, joinerSync.Port));
 
         File.WriteAllText(Path.Combine(ownerDir, "Owner2.md"), "owner second");
         File.WriteAllText(Path.Combine(joinerDir, "Joiner.md"), "from joiner");
@@ -62,7 +63,7 @@ public class SyncViewModelSyncGateTests : IDisposable
     public async Task A_malformed_invite_is_rejected()
     {
         using var joiner = Open(NewVault());
-        joiner.StartServing(IPAddress.Loopback);
+        joiner.StartServing();
         Assert.Equal(PairingOutcome.WrongVault, await joiner.JoinAsync("not-an-invite", "Bob", "bob@x"));
     }
 }

@@ -37,7 +37,10 @@ public sealed class UpdateCoordinator(IUpdateService service, AppSettings settin
         persist();
     }
 
-    // Thin pass-throughs so the head never reaches past the coordinator.
-    public Task<StagedUpdate?> DownloadAsync(UpdateInfo info) => service.DownloadAsync(info, null, default);
+    // Thin pass-throughs so the head never reaches past the coordinator. Progress + token are optional
+    // so a caller that wants neither (a silent download) still reads as DownloadAsync(info); the progress
+    // UI supplies both to drive the bar and to let the user cancel an in-flight download.
+    public Task<StagedUpdate?> DownloadAsync(UpdateInfo info, IProgress<double>? progress = null, CancellationToken ct = default)
+        => service.DownloadAsync(info, progress, ct);
     public ApplyOutcome Apply(StagedUpdate staged, string exePath) => service.ApplyAndRestart(staged, exePath);
 }

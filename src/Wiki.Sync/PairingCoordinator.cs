@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 namespace Wiki.Sync;
 
 /// <summary>The result of validating a <see cref="JoinRequest"/>.</summary>
-public enum PairingOutcome { Accepted, UnknownToken, Expired, AlreadyUsed, WrongVault, InvalidSignature, IdentityMismatch }
+public enum PairingOutcome { Accepted, UnknownToken, Expired, AlreadyUsed, WrongVault, InvalidSignature, IdentityMismatch, NoRoute, OwnerUnreachable, ExchangeFailed }
 
 /// <summary>The outcome of <see cref="PairingCoordinator.Accept"/>: the verdict, plus the reissued
 /// owner-signed list when a peer was added (null otherwise).</summary>

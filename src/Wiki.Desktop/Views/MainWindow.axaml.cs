@@ -298,7 +298,7 @@ public partial class MainWindow : Window
         {
             // A second window sharing another vault would try to bind the same sync/pairing port; degrade
             // to a non-serving state rather than crashing (concurrent multi-vault sync is a follow-up).
-            try { sync.StartServing(IPAddress.Any, _settings.PairingPort, _settings.SyncPort); }
+            try { sync.StartServing(_settings.PairingPort, _settings.SyncPort, _settings.InternetSyncEnabled); }
             catch (SocketException) { /* port already served by another window — leave this vault un-shared */ }
         }
         UpdateSyncStatusText();
@@ -1204,7 +1204,7 @@ public partial class MainWindow : Window
             }
             try
             {
-                if (!sync.IsSharing) sync.StartServing(IPAddress.Any, _settings.PairingPort, _settings.SyncPort);
+                if (!sync.IsSharing) sync.StartServing(_settings.PairingPort, _settings.SyncPort, _settings.InternetSyncEnabled);
             }
             catch (SocketException)
             {
@@ -1283,7 +1283,7 @@ public partial class MainWindow : Window
                 _sync = null;
                 UpdateSyncStatusText();
                 if (await EnsureSyncAsync() is not { } sync) return PairingOutcome.WrongVault;
-                if (!sync.IsSharing) sync.StartServing(IPAddress.Any, _settings.PairingPort, _settings.SyncPort);
+                if (!sync.IsSharing) sync.StartServing(_settings.PairingPort, _settings.SyncPort, _settings.InternetSyncEnabled);
 
                 var outcome = await sync.JoinAsync(form.Invite, form.Name, form.Email, form.HostOverride);
                 if (outcome == PairingOutcome.Accepted)
@@ -1647,12 +1647,57 @@ public partial class MainWindow : Window
 
     private async void OnSettings(object? sender, RoutedEventArgs e)
     {
+        // The dialog mutates _settings in place, so capture the internet-sync posture before it opens to tell
+        // whether the user toggled it.
+        var wasInternetSync = _settings.InternetSyncEnabled;
         if (await SettingsWindow.ShowAsync(this, _settings))
         {
             SaveSettings();
             ApplyThemeMode(_settings.ThemeMode);
             Vm?.ApplyPreferences(_settings.AttachmentsFolder, _settings.TemplatesFolder);
+            if (_settings.InternetSyncEnabled != wasInternetSync)
+                await ApplyInternetSyncChangeAsync();
         }
+    }
+
+    // Re-bind the sync listeners so an internet-sync toggle takes effect immediately, without an app restart.
+    // Turning it ON re-binds dual-stack and opens the firewall + UPnP mapping (via StartServing's reachability
+    // work); turning it OFF undoes that posture — drains any in-flight reachability work, releases the router
+    // mapping and the firewall admission — and re-binds IPv4-only so LAN sync keeps working while the
+    // internet-facing surface is closed. The undo runs even when not currently sharing: a firewall rule or
+    // router mapping can outlive the serve (or this session) and turning the setting off must close it. The
+    // peer set survives the stop/start (StopServing keeps it), so collaborators are not dropped.
+    private async Task ApplyInternetSyncChangeAsync()
+    {
+        var removed = true;
+        if (_sync is { } sync)
+        {
+            var wasSharing = sync.IsSharing;
+            if (wasSharing) sync.StopServing();
+            if (!_settings.InternetSyncEnabled) removed = await sync.RemoveInternetReachabilityAsync();
+            if (wasSharing)
+            {
+                try { sync.StartServing(_settings.PairingPort, _settings.SyncPort, _settings.InternetSyncEnabled); }
+                catch (SocketException) { /* another window holds the port — leave this vault un-shared, as elsewhere */ }
+            }
+        }
+        else if (!_settings.InternetSyncEnabled)
+        {
+            // No sync host stood up this session, but a firewall rule / router mapping may persist from an
+            // earlier one — turning the setting off must still close them. The blind unmap assumes the
+            // default same-number external ports an earlier session's mapping used (best-effort either way;
+            // building a full sync host — device identity, sidecars — just to undo this would be worse).
+            var mapper = new MonoNatPortMapper();
+            await mapper.TryUnmapAsync(_settings.PairingPort, _settings.PairingPort, TimeSpan.FromSeconds(5), CancellationToken.None);
+            await mapper.TryUnmapAsync(_settings.SyncPort, _settings.SyncPort, TimeSpan.FromSeconds(5), CancellationToken.None);
+            removed = await FirewallOpeners.CreateDefault().RemoveAsync(CancellationToken.None);
+        }
+        if (!removed)
+            await MessageAsync("Internet sync",
+                "The firewall rule could not be removed (was the elevation prompt declined?), so this device may " +
+                "still be reachable from the internet. Turn internet sync off again to retry, or remove the rule " +
+                $"\"{NetshFirewallOpener.RuleName}\" in Windows Defender Firewall.");
+        UpdateSyncStatusText();
     }
 
     private async void OnEditProperties(object? sender, RoutedEventArgs e) => await EditActiveProperties();
@@ -1760,12 +1805,15 @@ public partial class MainWindow : Window
         if (choice != UpdateChoice.UpdateNow) return;
 
         if (!await PromptSaveDirtyNoteTabsAsync()) return;                // save open work before the restart
-        StagedUpdate? staged;
-        try { staged = await Updates().DownloadAsync(info); }
-        catch (Exception ex) { await InfoAsync("Update", "Download failed: " + ex.Message); return; }
-        if (staged is null) { await InfoAsync("Update", "The download could not be verified and was discarded."); return; }
 
-        var outcome = Updates().Apply(staged, UpdateConfig.CurrentExePath());
+        // The download is a visible operation: a live progress bar the user can cancel, not a silent
+        // pause before the app suddenly restarts.
+        var result = await UpdateProgressDialog.RunAsync(this, Updates(), info);
+        if (result.Cancelled) return;                                    // user stopped it; stay on this version
+        if (result.Error is not null) { await InfoAsync("Update", "Download failed: " + result.Error); return; }
+        if (result.Staged is null) { await InfoAsync("Update", "The download could not be verified and was discarded."); return; }
+
+        var outcome = Updates().Apply(result.Staged, UpdateConfig.CurrentExePath());
         // Apply restarts the process on success; reaching here means it did not.
         await InfoAsync("Update", outcome == ApplyOutcome.NotWritable
             ? "This install location is not writable. Download the new version from the releases page."

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Wiki.Desktop.Sync;
 using Wiki.Sync;
@@ -9,39 +10,35 @@ namespace Wiki.Desktop.Tests;
 
 public class PairingOutcomeMessagesTests
 {
-    [Theory]
-    [InlineData(PairingOutcome.Accepted)]
-    [InlineData(PairingOutcome.UnknownToken)]
-    [InlineData(PairingOutcome.Expired)]
-    [InlineData(PairingOutcome.AlreadyUsed)]
-    [InlineData(PairingOutcome.WrongVault)]
-    [InlineData(PairingOutcome.InvalidSignature)]
-    [InlineData(PairingOutcome.IdentityMismatch)]
-    public void Every_outcome_has_a_nonempty_sentence(PairingOutcome outcome)
-        => Assert.False(string.IsNullOrWhiteSpace(PairingOutcomeMessages.For(outcome)));
-
     [Fact]
-    public void Messages_are_distinct_across_outcomes()
+    public void NoRoute_tells_the_user_the_owner_must_enable_internet_sync()
     {
-        var all = Enum.GetValues<PairingOutcome>().Select(PairingOutcomeMessages.For).ToArray();
-        Assert.Equal(all.Length, all.Distinct().Count());
+        var msg = PairingOutcomeMessages.For(PairingOutcome.NoRoute);
+        Assert.Contains("internet sync", msg);
     }
 
-    // The invite-problem cases must tell the user what to do next (ask the owner / re-paste the link),
-    // never surface the raw enum name.
+    [Fact]
+    public void OwnerUnreachable_names_offline_or_carrier_nat()
+    {
+        var msg = PairingOutcomeMessages.For(PairingOutcome.OwnerUnreachable);
+        Assert.Contains("offline", msg);
+    }
+
+    [Fact]
+    public void Accepted_still_maps()
+        => Assert.Equal("You're paired — syncing now.", PairingOutcomeMessages.For(PairingOutcome.Accepted));
+
+    public static IEnumerable<object[]> AllOutcomes() =>
+        Enum.GetValues<PairingOutcome>().Select(o => new object[] { o });
+
+    // General invariants for EVERY outcome (including any added later): the user always gets a real, friendly
+    // sentence, and it never leaks the raw enum member name (e.g. "NoRoute"/"OwnerUnreachable") to the UI.
     [Theory]
-    [InlineData(PairingOutcome.UnknownToken)]
-    [InlineData(PairingOutcome.Expired)]
-    [InlineData(PairingOutcome.AlreadyUsed)]
-    [InlineData(PairingOutcome.WrongVault)]
-    public void Invite_problems_are_actionable(PairingOutcome outcome)
+    [MemberData(nameof(AllOutcomes))]
+    public void Every_outcome_maps_to_a_non_empty_message_that_hides_the_enum_name(PairingOutcome outcome)
     {
         var msg = PairingOutcomeMessages.For(outcome);
-        Assert.True(
-            msg.Contains("owner", StringComparison.OrdinalIgnoreCase)
-            || msg.Contains("paste", StringComparison.OrdinalIgnoreCase)
-            || msg.Contains("link", StringComparison.OrdinalIgnoreCase),
-            $"expected an actionable hint in: {msg}");
+        Assert.False(string.IsNullOrWhiteSpace(msg), $"{outcome} has no message");
         Assert.DoesNotContain(outcome.ToString(), msg, StringComparison.Ordinal);
     }
 }

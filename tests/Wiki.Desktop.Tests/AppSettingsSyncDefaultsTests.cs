@@ -14,4 +14,8 @@ public class AppSettingsSyncDefaultsTests
         Assert.Equal(8767, s.SyncPort);
         Assert.Equal(8768, s.PairingPort);
     }
+
+    [Fact]
+    public void InternetSync_defaults_off()
+        => Assert.False(new AppSettings().InternetSyncEnabled);
 }

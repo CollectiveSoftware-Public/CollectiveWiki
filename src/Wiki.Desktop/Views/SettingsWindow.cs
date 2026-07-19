@@ -29,6 +29,9 @@ public sealed class SettingsWindow : DialogWindow
         var autoUpdate = new CheckBox { Content = "Check for updates automatically", IsChecked = settings.UpdateCheckMode == "Automatic" };
         AutomationProperties.SetName(autoUpdate, "Check for updates automatically");
 
+        var internetSync = new CheckBox { Content = "Enable internet sync (lets collaborators outside your network reach you)", IsChecked = settings.InternetSyncEnabled };
+        AutomationProperties.SetName(internetSync, "Enable internet sync");
+
         var attachments = new TextBox { Text = settings.AttachmentsFolder, Width = 260 };
         AutomationProperties.SetName(attachments, "Attachments folder");
         var templates = new TextBox { Text = settings.TemplatesFolder, Width = 260 };
@@ -40,7 +43,7 @@ public sealed class SettingsWindow : DialogWindow
 
         var dlg = new SettingsWindow
         {
-            Title = "Settings", Width = 440, Height = 430, SizeToContent = SizeToContent.Manual,
+            Title = "Settings", Width = 440, Height = 470, SizeToContent = SizeToContent.Manual,
             Content = new StackPanel
             {
                 Margin = new Thickness(18),
@@ -56,6 +59,7 @@ public sealed class SettingsWindow : DialogWindow
                     autosave,
                     new TextBlock { Text = "Updates", FontWeight = FontWeight.Bold },
                     autoUpdate,
+                    internetSync,
                     Labeled("Attachments folder (pasted images)", attachments),
                     Labeled("Templates folder", templates),
                     new StackPanel
@@ -78,6 +82,7 @@ public sealed class SettingsWindow : DialogWindow
             // Only toggle among Automatic/Manual — never silently leave Unset (that needs explicit consent).
             if (settings.UpdateCheckMode != "Unset")
                 settings.UpdateCheckMode = autoUpdate.IsChecked == true ? "Automatic" : "Manual";
+            settings.InternetSyncEnabled = internetSync.IsChecked == true;
             saved = true;
             dlg.Close();
         };

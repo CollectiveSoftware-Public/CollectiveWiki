@@ -15,6 +15,11 @@ namespace Wiki.Sync.Transport;
 public sealed class PairingListener : IDisposable
 {
     private static readonly TimeSpan DefaultHandshakeTimeout = TimeSpan.FromSeconds(10);
+    // Pairing admits ANY device (roster-independent), so an unauthenticated internet peer can complete the cheap
+    // mutual-TLS handshake and then stall the exchange, holding its slot. The exchange is a single request/response
+    // round the joiner sends immediately, so this generous deadline never trips a legitimate joiner but bounds an
+    // idle attacker to one slot for at most this long (vs. indefinitely).
+    private static readonly TimeSpan DefaultServeTimeout = TimeSpan.FromSeconds(30);
 
     private readonly DeviceIdentity _self;
     private readonly Func<TlsPeerConnection, CancellationToken, Task> _onPeer;
@@ -23,16 +28,19 @@ public sealed class PairingListener : IDisposable
     private CancellationTokenSource? _cts;
 
     public PairingListener(DeviceIdentity self, Func<TlsPeerConnection, CancellationToken, Task> onPeer,
-        TimeSpan? handshakeTimeout = null, int maxConcurrentHandshakes = 64)
+        TimeSpan? handshakeTimeout = null, int maxConcurrentHandshakes = 64, TimeSpan? serveTimeout = null)
     {
         _self = self;
         _onPeer = onPeer;
-        _gate = new ConnectionGate(handshakeTimeout ?? DefaultHandshakeTimeout, maxConcurrentHandshakes);
+        _gate = new ConnectionGate(handshakeTimeout ?? DefaultHandshakeTimeout, maxConcurrentHandshakes,
+            serveTimeout ?? DefaultServeTimeout);
     }
 
     public IPEndPoint Start(IPEndPoint bind)
     {
         _listener = new TcpListener(bind);
+        if (bind.AddressFamily == AddressFamily.InterNetworkV6)
+            _listener.Server.DualMode = true;   // accept IPv4-mapped clients too
         _listener.Start();
         _cts = new CancellationTokenSource();
         _ = AcceptLoopAsync(_listener, _cts.Token);
@@ -47,7 +55,13 @@ public sealed class PairingListener : IDisposable
             try { client = await listener.AcceptTcpClientAsync(ct); }
             catch (OperationCanceledException) { return; }
             catch (ObjectDisposedException) { return; }
-            catch (SocketException) { return; }
+            catch (SocketException)
+            {
+                // A transient accept-level socket error (e.g. a connection reset during accept) must NOT kill the
+                // listener — back off briefly and keep accepting. Genuine shutdown surfaces as cancellation below.
+                try { await Task.Delay(200, ct); } catch (OperationCanceledException) { return; }
+                continue;
+            }
             // Admit ANY device (roster-independent); the invite token gates pairing at the app layer.
             _ = _gate.HandleAsync(client, _self, _ => true, _onPeer, ct);
         }

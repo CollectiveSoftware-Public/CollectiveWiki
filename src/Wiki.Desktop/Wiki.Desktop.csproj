@@ -27,6 +27,7 @@
     <PackageReference Include="Collective.Docs.Controls" Version="1.1.0" />
     <PackageReference Include="Collective.Platform" Version="1.12.0" />
     <PackageReference Include="Collective.Platform.Secrets" Version="1.12.0" />
+    <PackageReference Include="Mono.Nat" Version="3.0.4" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Wiki.Core\Wiki.Core.csproj" />

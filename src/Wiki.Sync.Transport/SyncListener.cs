@@ -34,6 +34,8 @@ public sealed class SyncListener : IDisposable
     public IPEndPoint Start(IPEndPoint bind)
     {
         _listener = new TcpListener(bind);
+        if (bind.AddressFamily == AddressFamily.InterNetworkV6)
+            _listener.Server.DualMode = true;   // accept IPv4-mapped clients too
         _listener.Start();
         _cts = new CancellationTokenSource();
         _ = AcceptLoopAsync(_listener, _cts.Token);
@@ -48,7 +50,13 @@ public sealed class SyncListener : IDisposable
             try { client = await listener.AcceptTcpClientAsync(ct); }
             catch (OperationCanceledException) { return; }
             catch (ObjectDisposedException) { return; }
-            catch (SocketException) { return; }
+            catch (SocketException)
+            {
+                // A transient accept-level socket error (e.g. a connection reset during accept) must NOT kill the
+                // listener — back off briefly and keep accepting. Genuine shutdown surfaces as cancellation below.
+                try { await Task.Delay(200, ct); } catch (OperationCanceledException) { return; }
+                continue;
+            }
             _ = _gate.HandleAsync(client, _self, _acceptPeer, (conn, c) => _server.ServeAsync(conn.Stream, c), ct);
         }
     }
